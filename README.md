@@ -1,113 +1,183 @@
-﻿# PDF Extraction Agent System (Python)
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="PDF Extraction logo" width="72">
+</p>
 
-Local multi-agent PDF extraction system with LangGraph orchestration and engine adapters for PaddleOCR-VL and MinerU.
+# Intelligent PDF Extraction System
+
+A local PDF extraction product for turning PDFs into structured JSON, Markdown, page previews, validation reports, and benchmarkable parser runs. It combines a React review UI with a Python LangGraph backend and Docker-based parser adapters for MinerU and PaddleOCR-VL.
+
+![Product UI](docs/assets/product-ui.png)
+
+## What It Does
+- Upload a PDF and create a persisted job workspace.
+- Select extraction scope by all pages, outline sections, or manual page range.
+- Run a multi-agent pipeline: ingest -> select -> parse -> build IR -> enrich visuals -> validate.
+- Use MinerU as the production parser and PaddleOCR-VL as a fallback/repair path.
+- Export `document_ir.json`, `document.md`, `validation_report.json`, and `pipeline_state.json`.
+- Inspect page previews, run history, merged outputs, and per-page repair results in the frontend.
+- Optionally enable Visual Agent interpretation for visual-heavy pages with `OPENAI_API_KEY`.
+- Run benchmark manifests to compare parser speed and quality.
 
 ## Quick Start
+
 Prerequisites:
 - Python 3.11
 - Node.js 20+
-- Docker Desktop, required for real Paddle/MinerU parsing
+- Docker Desktop, required for real MinerU/Paddle parsing
+- PowerShell on Windows for the bundled run scripts
 
-Backend setup and test:
+Clone and enter the project:
 ```powershell
-cd C:\Users\lj448\dev\pdf-extraction-agent-system
+git clone https://github.com/Riveray-Jiang/Intelligent-PDF-Extraction-System.git
+cd Intelligent-PDF-Extraction-System
+```
+
+Set up the backend:
+```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 .\.venv\Scripts\python.exe -m pytest -q
 .\scripts\run_product_server.ps1
 ```
 
-Frontend setup:
+The backend starts at:
+```text
+http://127.0.0.1:8892
+```
+
+Set up the frontend in another terminal:
 ```powershell
-cd C:\Users\lj448\dev\pdf-extraction-agent-system\frontend
+cd frontend
 npm install
 npm run lint
 npm run build
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-Open `http://127.0.0.1:5173/`. The frontend defaults to `http://127.0.0.1:8892` for the backend; override with `frontend/.env` if needed:
+If PowerShell blocks `npm.ps1`, use `npm.cmd` instead:
+```powershell
+npm.cmd install
+npm.cmd run dev -- --host 0.0.0.0 --port 5173
+```
+
+Open:
+```text
+http://127.0.0.1:5173/
+```
+
+The frontend defaults to `http://127.0.0.1:8892`. Override it with `frontend/.env`:
 ```text
 VITE_BACKEND_URL=http://127.0.0.1:8892
 ```
 
-Optional Visual Agent support:
+## Optional Visual Agent
+
+Create `.env` from `.env.example` and set:
 ```text
 OPENAI_API_KEY=<your key>
 ```
 
-## Current Status
-- Phase 1 complete: project skeleton, configs, Docker baseline, and benchmark manifest.
-- Phase 2 complete: all five agents implemented, adapters implemented, graph wiring enabled, and unit tests passing.
-- Phase 3 in progress: ParseAgent now executes retry profiles via `docker run` and ingests JSON outputs.
+When enabled, Visual Agent can interpret maps, figures, diagrams, charts, stamps, forms, and other visual-heavy PDF pages that ordinary text extraction does not fully expose.
 
-## Pipeline
-- `ingest` -> `select` -> `parse` -> `build_ir` -> `enrich_visual` -> `validate`
-- CLI entrypoint:
-  - `python -m backend.pipeline_graph --input <pdf> --engine <paddle|mineru> --selection-mode <all|outline|pagerange> --selection "<expr>" --output-dir <dir> --max-parse-attempts 2 --max-rerun-attempts 1`
-  - Dev-only mock parsing: append `--allow-mock-parse`
-  - If `--selection-mode outline` is requested but the PDF has no outline/bookmarks, the system falls back to `all`.
-- Host requirement for real parsing: Docker CLI available on `PATH` and target engine image built/pulled.
-- Windows/WSL note: on Windows host this flow assumes Docker Desktop (`docker.exe`). If running from WSL Linux Python, ensure paths are Linux-visible (for example `/mnt/c/...`) and use Linux Docker CLI.
+## Product Flow
+1. Open the frontend.
+2. Upload one PDF.
+3. Choose all pages, outline sections, or a page range.
+4. Run extraction.
+5. Inspect page previews and artifacts.
+6. Use reliable repair for pages that need fallback parsing.
 
-## Visual Agent
-- `Visual Agent` automatically enriches visual-heavy pages such as diagrams, workflows, maps, and other non-text visuals.
-- Enable it by setting `OPENAI_API_KEY` in the backend environment before starting the product server or pipeline.
-- It only runs on pages that already contain visual block types from the base parser, and failures fall back to the normal non-LLM output.
+Main artifacts:
+- `document_ir.json`: structured document intermediate representation
+- `document.md`: Markdown export
+- `validation_report.json`: quality floor and failed-page report
+- `pipeline_state.json`: final pipeline metadata
+- `performance_profile.json`: node timing profile
 
-## Benchmark (Phase 4)
-- Run benchmark:
-  - `python -m backend.benchmark_runner --manifest benchmarks/benchmark_set.yaml --engines paddle,mineru --output-dir reports/benchmark_run_001`
-- Freeze calibrated runtime thresholds to config:
-  - append `--freeze-thresholds --quality-config configs/quality_floor.yaml`
-  - Guardrail: freeze is skipped automatically if no successful warm runs are available (all runs parse-failed or manual-review).
-- Main outputs:
-  - `benchmark_summary.md`
-  - `quality_floor_baseline.md`
-  - `engine_decision.md`
+Runtime data is written under `data/jobs/` and is intentionally ignored by Git.
 
-## MinerU Fast Upgrade Benchmark
-- Purpose: decide whether `Fast` should move from `MinerU 2.7.6 pipeline` to `MinerU 3.x pipeline / hybrid` using local A6000 measurements.
-- Build the MinerU 3.1 probe image and run the full A/B/C/D matrix. Default is warm-only; add `-ColdRuns 1` only when explicitly measuring service/model startup cost:
-  - `.\scripts\run_mineru_fast_upgrade_benchmark.ps1 -BuildMinerU31 -OutputDir reports/mineru_fast_upgrade_v2`
-- Dry-run manifest/config validation without invoking Docker:
-  - `python -m backend.mineru_fast_upgrade_benchmark --manifest benchmarks/mineru_fast_upgrade_v2.yaml --dry-run`
-- Main outputs:
-  - `benchmark_summary.md`
-  - `benchmark_candidate_rows.json`
-  - `benchmark_doc_rows.json`
-  - `benchmark_overview.json`
+## CLI Usage
 
-## Paper Tracks (Fair Comparison)
-- Track A (VLM vs VLM):
-  - Paddle: `doc_parser`
-  - MinerU: `hybrid-auto-engine`
-  - Config: `configs/engines_track_a_vlm.yaml`
-- Track B (Lightweight vs Lightweight):
-  - Paddle: `pp_structurev3`
-  - MinerU: `pipeline`
-  - Config: `configs/engines_track_b_lightweight.yaml`
+Run the pipeline directly:
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m backend.pipeline_graph `
+  --input "<pdf>" `
+  --engine mineru `
+  --selection-mode all `
+  --output-dir "reports/run_001" `
+  --engine-config configs/engines_prod.yaml `
+  --max-parse-attempts 1 `
+  --max-rerun-attempts 0
+```
 
-- Manifests:
-  - `benchmarks/benchmark_paper_10pages.yaml`
-  - `benchmarks/benchmark_paper_50pages.yaml`
-  - `benchmarks/benchmark_paper_278pages.yaml`
+Production preset:
+```powershell
+.\scripts\run_prod_pipeline.ps1 -InputPdf "<pdf>" -OutputDir "reports/prod_run_001"
+```
 
-- Example:
-  - `python -m backend.benchmark_runner --manifest benchmarks/benchmark_paper_10pages.yaml --engines paddle,mineru --engine-config configs/engines_track_b_lightweight.yaml --output-dir reports/paper_track_b_light_10p --max-parse-attempts 1 --max-rerun-attempts 0`
+Page subset example:
+```powershell
+.\scripts\run_prod_pipeline.ps1 -InputPdf "<pdf>" -OutputDir "reports/prod_run_001" -SelectionMode pagerange -Selection "1-50"
+```
 
-## Key Directories
-- `src/backend/`: agents, graph, adapters, types
-- `configs/`: engine retries and quality floor config
-- `benchmarks/`: benchmark manifest
-- `docker/`: Paddle and MinerU images + compose
-- `reports/`: generated outputs and benchmark reports
+## Parser Configuration
 
-## Production Preset
-- Primary engine: `MinerU pipeline`
-- Fallback engine: `Paddle pp_structurev3`
-- Fixed config: `configs/engines_prod.yaml`
-- One-command PowerShell entrypoint:
-  - `.\scripts\run_prod_pipeline.ps1 -InputPdf "<pdf>" -OutputDir "<output_dir>"`
-  - Example with page subset:
-    - `.\scripts\run_prod_pipeline.ps1 -InputPdf "<pdf>" -OutputDir reports/prod_run_001 -SelectionMode pagerange -Selection "1-50"`
+Important config files:
+- `configs/engines_prod.yaml`: production fast parser profile
+- `configs/engines_prod_vlm_repair.yaml`: reliable repair/cascade profile
+- `configs/quality_floor.yaml`: validation thresholds
+- `configs/engines_track_a_vlm.yaml`: VLM-vs-VLM comparison track
+- `configs/engines_track_b_lightweight.yaml`: lightweight-vs-lightweight comparison track
+
+Docker assets:
+- `docker/Dockerfile.mineru`
+- `docker/Dockerfile.mineru31`
+- `docker/Dockerfile.paddle`
+- `docker/compose.yaml`
+
+## Benchmarks
+
+Run a benchmark manifest:
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m backend.benchmark_runner `
+  --manifest benchmarks/benchmark_set.yaml `
+  --engines paddle,mineru `
+  --output-dir reports/benchmark_run_001
+```
+
+MinerU fast-upgrade dry run:
+```powershell
+.\.venv\Scripts\python.exe -m backend.mineru_fast_upgrade_benchmark `
+  --manifest benchmarks/mineru_fast_upgrade_v2.yaml `
+  --dry-run
+```
+
+Full MinerU fast-upgrade benchmark:
+```powershell
+.\scripts\run_mineru_fast_upgrade_benchmark.ps1 -BuildMinerU31 -OutputDir reports/mineru_fast_upgrade_v2
+```
+
+## Project Layout
+- `src/backend/`: agents, graph orchestration, parser adapters, server, validation, exports
+- `frontend/`: React + TypeScript review UI
+- `configs/`: parser profiles and quality floor settings
+- `benchmarks/`: benchmark manifests
+- `docker/`: parser runtime images and compose config
+- `docs/`: API notes and README assets
+- `tests/`: backend unit tests
+
+## Validation Status
+
+Current checked commands:
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+npm.cmd run lint
+npm.cmd run build
+```
+
+Expected result:
+- Backend tests pass.
+- Frontend lint passes.
+- Frontend production build completes.
