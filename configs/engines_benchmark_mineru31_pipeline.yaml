@@ -1,0 +1,22 @@
+engines:
+  mineru:
+    image: pdf-agent/mineru-runner:3.1.3
+    runtime: docker_service
+    command: mineru
+    timeout_sec: 3600
+    service:
+      type: mineru_api
+      host: 127.0.0.1
+      port: 19310
+      container_name: pdf-agent-mineru31-pipeline-bench
+      health_path: /openapi.json
+      startup_timeout_sec: 900
+      fallback_runtime: docker
+    cache_mounts:
+      - host_path: .runtime_cache/mineru31/root_cache
+        container_path: /root/.cache
+    retry_profiles:
+      - name: pipeline_gpu_auto
+        backend: pipeline
+        source: modelscope
+        timeout_sec: 3600

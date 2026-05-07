@@ -1,0 +1,16 @@
+FROM paddlepaddle/paddle:3.2.1-gpu-cuda11.8-cudnn8.9
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir \
+    "paddleocr[doc-parser]==3.4.0" \
+    "paddlex[ocr]" \
+    "python-docx"
+
+WORKDIR /workspace

@@ -1,0 +1,48 @@
+engines:
+  paddle:
+    image: pdf-agent/paddle-runner:0.1.0
+    runtime: docker
+    command: paddleocr doc_parser
+    timeout_sec: 1800
+    cache_mounts:
+      - host_path: .runtime_cache/paddle/root_cache
+        container_path: /root/.cache
+      - host_path: .runtime_cache/paddle/paddlex
+        container_path: /root/.paddlex
+    retry_profiles:
+      - name: no_hpi_no_trt_fp16
+        enable_hpi: false
+        use_tensorrt: false
+        precision: fp16
+        timeout_sec: 5400
+        env:
+          PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"
+      - name: no_hpi_no_trt_fp32
+        enable_hpi: false
+        use_tensorrt: false
+        precision: fp32
+        timeout_sec: 5400
+        env:
+          PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"
+  mineru:
+    image: pdf-agent/mineru-runner:0.1.0
+    runtime: docker
+    command: mineru
+    timeout_sec: 1800
+    cache_mounts:
+      - host_path: .runtime_cache/mineru/root_cache
+        container_path: /root/.cache
+    retry_profiles:
+      - name: hybrid_auto
+        backend: hybrid-auto-engine
+        source: modelscope
+      - name: pipeline_gpu_auto
+        backend: pipeline
+        source: modelscope
+      - name: pipeline_cpu
+        backend: pipeline
+        use_gpu: false
+        source: modelscope
+        device: cpu
+        env:
+          MINERU_DEVICE_MODE: cpu

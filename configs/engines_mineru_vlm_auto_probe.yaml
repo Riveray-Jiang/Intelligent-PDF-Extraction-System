@@ -1,0 +1,13 @@
+engines:
+  mineru:
+    image: pdf-agent/mineru-runner:0.1.0
+    runtime: docker
+    command: mineru
+    timeout_sec: 3600
+    cache_mounts:
+      - host_path: .runtime_cache/mineru/root_cache
+        container_path: /root/.cache
+    retry_profiles:
+      - name: vlm_auto
+        backend: vlm-auto-engine
+        source: modelscope

@@ -1,0 +1,21 @@
+documents:
+  - id: cn_main_long
+    path: "C:/Users/lj448/dev/multi-agent-env-data-entry/docs/Environmental reports/江西理产业环评报告-按环节分类/1 锂矿开采/万载晶益锂业有限公司年处理 30 万吨锂长石建设项目环境影响报.pdf"
+    lang: zh
+    tags: [long, report, mixed]
+  - id: en_admin
+    path: "C:/Users/lj448/dev/multi-agent-env-data-entry/docs/Environmental permits/XP3035TC - Permit 2017.pdf"
+    lang: en
+    tags: [permit, admin]
+  - id: en_academic
+    path: "C:/Users/lj448/dev/multi-agent-env-data-entry/docs/lithium environmental footprint/Current and Future Impacts of Lithium Carbonate from Brines-A Global Regionalized Life Cycle Assessment Model.pdf"
+    lang: en
+    tags: [paper, academic, references]
+  - id: cn_mixed
+    path: "C:/Users/lj448/dev/multi-agent-env-data-entry/docs/小商品城 2.pdf"
+    lang: zh
+    tags: [finance, mixed, table]
+runs:
+  cold_runs: 1
+  warm_runs: 3
+selection_mode: all

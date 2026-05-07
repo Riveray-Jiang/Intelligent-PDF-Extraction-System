@@ -1,0 +1,26 @@
+engines:
+  mineru:
+    image: pdf-agent/mineru-runner:0.1.0
+    runtime: docker_service
+    command: mineru
+    timeout_sec: 3600
+    service:
+      type: mineru_direct_vlm_worker
+      host: 127.0.0.1
+      port: 19103
+      container_name: pdf-agent-mineru25-pro-repair
+      health_path: /health
+      bootstrap_pip_packages:
+        - fastapi
+        - uvicorn
+        - python-multipart
+      startup_timeout_sec: 1200
+      fallback_runtime: docker_direct_vlm
+    cache_mounts:
+      - host_path: .runtime_cache/huggingface
+        container_path: /root/.cache/huggingface
+    retry_profiles:
+      - name: mineru25_pro_direct
+        direct_vlm_model_id: opendatalab/MinerU2.5-Pro-2604-1.2B
+        scale: 2.0
+        timeout_sec: 3600

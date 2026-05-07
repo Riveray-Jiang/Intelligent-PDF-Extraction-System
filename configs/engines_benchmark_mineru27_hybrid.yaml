@@ -1,0 +1,26 @@
+engines:
+  mineru:
+    image: pdf-agent/mineru-runner:0.1.0
+    runtime: docker_service
+    command: mineru
+    timeout_sec: 7200
+    service:
+      type: mineru_api
+      host: 127.0.0.1
+      port: 19271
+      container_name: pdf-agent-mineru27-hybrid-bench
+      health_path: /openapi.json
+      bootstrap_pip_packages:
+        - fastapi
+        - uvicorn
+        - python-multipart
+      startup_timeout_sec: 1200
+      fallback_runtime: docker
+    cache_mounts:
+      - host_path: .runtime_cache/mineru27/root_cache
+        container_path: /root/.cache
+    retry_profiles:
+      - name: hybrid_auto
+        backend: hybrid-auto-engine
+        source: modelscope
+        timeout_sec: 7200

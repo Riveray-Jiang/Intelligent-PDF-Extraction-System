@@ -1,0 +1,59 @@
+documents:
+  - id: full_doc_zh
+    path: "C:/Users/lj448/dev/multi-agent-env-data-entry/docs/Environmental reports/江西理产业环评报告-按环节分类/1 锂矿开采/万载晶益锂业有限公司年处理 30 万吨锂长石建设项目环境影响报.pdf"
+    lang: zh
+    note: "Primary Chinese EIA report used for full-document benchmark and most page-type sampling."
+
+  - id: permit_19_12_2003
+    path: "C:/Users/lj448/dev/multi-agent-env-data-entry/docs/Environmental permits/Permit 19.12.2003.pdf"
+    lang: en
+    note: "Supplemental permit document used only for form/template sampling."
+
+page_numbering: 1-based
+sampling_round: pilot_v2
+
+types:
+  toc_list:
+    description: "目录页、附件清单页、条目列表页"
+    samples:
+      - document_id: full_doc_zh
+        pages: [1, 2, 3, 4]
+        backup_pages: []
+
+  text_heavy:
+    description: "无表格或几乎无表格的连续正文分析页"
+    samples:
+      - document_id: full_doc_zh
+        pages: [45, 79, 103, 206]
+        backup_pages: [95, 159, 213, 228, 244, 250]
+
+  table_heavy:
+    description: "表格主导页，文本极少或仅作表题/引导说明"
+    samples:
+      - document_id: full_doc_zh
+        pages: [11, 12, 18, 69, 71, 73]
+        backup_pages: [13, 14, 19, 20, 22, 70, 72]
+
+  mixed_layout:
+    description: "正文、小标题、说明文字与表格混排页"
+    samples:
+      - document_id: full_doc_zh
+        pages: [21, 23, 41, 54, 57]
+        backup_pages: [25, 28, 33, 42, 52, 58, 80]
+
+  form_template:
+    description: "字段化、模板化、固定版式较强的官方文书页面"
+    samples:
+      - document_id: permit_19_12_2003
+        pages: [2, 3]
+        backup_pages: [4]
+
+excluded_types:
+  - name: diagram_flowchart
+    reason: "保留为定性案例页，不纳入第一轮核心定量采样。"
+
+first_pass_union:
+  - document_id: full_doc_zh
+    pages: [1, 2, 3, 4, 11, 12, 18, 21, 23, 41, 45, 54, 57, 69, 71, 73, 79, 103, 206]
+  - document_id: permit_19_12_2003
+    pages: [2, 3]

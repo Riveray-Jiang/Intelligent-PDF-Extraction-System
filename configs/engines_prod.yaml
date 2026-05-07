@@ -1,0 +1,52 @@
+﻿engines:
+  mineru:
+    image: pdf-agent/mineru-runner:0.1.0
+    runtime: docker_service
+    command: mineru
+    timeout_sec: 1800
+    service:
+      type: mineru_api
+      host: 127.0.0.1
+      port: 19100
+      container_name: pdf-agent-mineru-api
+      health_path: /openapi.json
+      bootstrap_pip_packages:
+        - fastapi
+        - uvicorn
+        - python-multipart
+      startup_timeout_sec: 600
+      fallback_runtime: docker
+    cache_mounts:
+      - host_path: .runtime_cache/mineru/root_cache
+        container_path: /root/.cache
+    retry_profiles:
+      - name: pipeline_gpu_auto
+        backend: pipeline
+        source: modelscope
+
+  paddle:
+    image: pdf-agent/paddle-runner:0.1.1-docx
+    runtime: docker_service
+    command: paddleocr pp_structurev3
+    timeout_sec: 1800
+    service:
+      type: paddle_worker
+      host: 127.0.0.1
+      port: 19101
+      container_name: pdf-agent-paddle-ppstructurev3
+      worker_mode: pp_structurev3
+      startup_timeout_sec: 600
+      fallback_runtime: docker
+    cache_mounts:
+      - host_path: .runtime_cache/paddle/root_cache
+        container_path: /root/.cache
+      - host_path: .runtime_cache/paddle/paddlex
+        container_path: /root/.paddlex
+    retry_profiles:
+      - name: pp_structurev3_fp16
+        enable_hpi: false
+        use_tensorrt: false
+        precision: fp16
+        timeout_sec: 1800
+        env:
+          PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: "True"

@@ -1,0 +1,41 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend build output
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Runtime output and local caches
+.runtime_cache/
+.runtime_logs/
+.docker_auth_bypass/
+.docker_tmp*/
+data/jobs/
+data/benchmarks/
+data/dev_logs/
+data/*.log
+data/run_history.jsonl
+benchmarks/runs/
+reports/
+tmp/
+*.log
+tmp_*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db

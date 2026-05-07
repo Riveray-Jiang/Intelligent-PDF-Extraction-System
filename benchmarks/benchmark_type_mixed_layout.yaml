@@ -1,0 +1,9 @@
+documents:
+  - id: full_doc_zh
+    path: "C:/Users/lj448/dev/multi-agent-env-data-entry/docs/Environmental reports/江西理产业环评报告-按环节分类/1 锂矿开采/万载晶益锂业有限公司年处理 30 万吨锂长石建设项目环境影响报.pdf"
+    lang: zh
+runs:
+  cold_runs: 1
+  warm_runs: 1
+selection_mode: pagerange
+selection: "21,23,41,54,57"

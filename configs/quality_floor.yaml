@@ -1,0 +1,26 @@
+policy: calibrate_then_freeze
+metrics:
+  empty_page_rate:
+    formula: "empty_pages / non_blank_pages"
+    threshold: "<= min(0.06, best_empty + 0.02)"
+    runtime_max: 0.06
+  order_anomaly_rate:
+    formula: "anomalous_pages / pages_with_content"
+    threshold: "<= min(0.10, best_order + 0.03)"
+    runtime_max: 0.10
+  table_anomaly_rate:
+    formula: "anomalous_tables / total_tables"
+    threshold: "<= min(0.20, best_table + 0.05)"
+    runtime_max: 0.20
+  coverage_rate:
+    formula: "pages_with_content / non_blank_pages"
+    threshold: ">= max(0.94, best_coverage - 0.02)"
+    runtime_min: 0.94
+algorithms:
+  render_dpi: 150
+  ink_ratio_non_blank_threshold: 0.0025
+  order_inversion_anomaly_threshold: 0.35
+  order_missing_ratio_threshold: 0.20
+  table_cols_max: 40
+  table_rows_max: 2000
+  table_empty_row_ratio_max: 0.50
