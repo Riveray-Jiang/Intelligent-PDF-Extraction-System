@@ -1,21 +1,9 @@
 ﻿engines:
   mineru:
     image: pdf-agent/mineru-runner:0.1.0
-    runtime: docker_service
+    runtime: docker
     command: mineru
     timeout_sec: 1800
-    service:
-      type: mineru_api
-      host: 127.0.0.1
-      port: 19100
-      container_name: pdf-agent-mineru-api
-      health_path: /openapi.json
-      bootstrap_pip_packages:
-        - fastapi
-        - uvicorn
-        - python-multipart
-      startup_timeout_sec: 600
-      fallback_runtime: docker
     cache_mounts:
       - host_path: .runtime_cache/mineru/root_cache
         container_path: /root/.cache
