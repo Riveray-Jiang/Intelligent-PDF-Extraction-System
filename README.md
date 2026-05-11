@@ -124,7 +124,7 @@ Page subset example:
 ## Parser Configuration
 
 Important config files:
-- `configs/engines_prod.yaml`: production fast parser profile; uses one-shot Docker runs by default for reliable local startup
+- `configs/engines_prod.yaml`: production fast parser profile
 - `configs/engines_prod_vlm_repair.yaml`: reliable repair/cascade profile
 - `configs/quality_floor.yaml`: validation thresholds
 - `configs/engines_track_a_vlm.yaml`: VLM-vs-VLM comparison track
