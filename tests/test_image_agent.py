@@ -28,6 +28,19 @@ def test_page_has_image_content_detects_image_blocks() -> None:
     assert page_has_image_content(page) is True
 
 
+def test_page_has_image_content_ignores_caption_only_blocks() -> None:
+    page = Page(
+        page_index=0,
+        blocks=[
+            Block(id="b1", type="figure_title", text="Figure 1. Process flow", page_index=0),
+            Block(id="b2", type="image_caption", text="Factory site photo", page_index=0),
+            Block(id="b3", type="text", text="The report discusses the image in prose.", page_index=0),
+        ],
+    )
+
+    assert page_has_image_content(page) is False
+
+
 def test_image_agent_enriches_image_pages(monkeypatch, tmp_path) -> None:
     agent = ImageAgent(api_key="test-key")
     document = DocumentIR(
@@ -91,6 +104,29 @@ def test_image_agent_skips_enrichment_without_key(tmp_path) -> None:
     assert stats["image_pages_detected"] == 1
     assert stats["image_pages_enriched"] == 0
     assert all(block.type != "image_interpretation" for block in enriched.pages[0].blocks)
+
+
+def test_image_agent_does_not_generate_for_caption_only_page(monkeypatch, tmp_path) -> None:
+    agent = ImageAgent(api_key="test-key")
+    page = Page(
+        page_index=0,
+        blocks=[
+            Block(id="b1", type="figure_title", text="Figure 1. Process flow", page_index=0, order=0),
+            Block(id="b2", type="image_caption", text="Factory site photo", page_index=0, order=1),
+        ],
+    )
+
+    def fail_if_rendered(path):  # noqa: ANN001
+        raise AssertionError("caption-only pages must not be rendered for Image Agent")
+
+    monkeypatch.setattr("backend.image_agent.pdfium.PdfDocument", fail_if_rendered)
+
+    record, stats = agent.generate_page_record(page, pdf_path=tmp_path / "demo.pdf")
+
+    assert stats["image_pages_detected"] == 0
+    assert stats["image_pages_enriched"] == 0
+    assert record["generated"] is False
+    assert record["has_meaningful_image"] is False
 
 
 def test_image_agent_generates_single_page_record(monkeypatch, tmp_path) -> None:

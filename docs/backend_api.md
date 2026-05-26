@@ -326,8 +326,10 @@ Request:
 ```
 
 Runs Image Agent for one page and returns the same image interpretation fields
-used by page preview. This endpoint requires `OPENAI_API_KEY`; otherwise it
-returns `409`.
+used by page preview. The page must contain detected visual content such as an
+`image`, `figure`, or `image_body` block. `figure_title` and `image_caption`
+blocks are treated as context only and do not trigger Image Agent by themselves.
+This endpoint requires `OPENAI_API_KEY`; otherwise it returns `409`.
 
 Because this sends rendered page imagery to OpenAI, call it only for documents
 that are allowed to leave the local machine.

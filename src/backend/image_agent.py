@@ -21,9 +21,7 @@ from .types import Page
 IMAGE_BLOCK_TYPES = {
     "image",
     "figure",
-    "figure_title",
     "image_body",
-    "image_caption",
 }
 IMAGE_AGENT_BLOCK_TYPE = "image_interpretation"
 IMAGE_AGENT_LANGUAGE_ZH = "zh"

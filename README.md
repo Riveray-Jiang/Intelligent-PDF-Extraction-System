@@ -172,9 +172,12 @@ Image Agent is optional. It is enabled when `.env` contains:
 OPENAI_API_KEY=<your key>
 ```
 
-When enabled, Image Agent can interpret maps, figures, stamps, diagrams, charts,
-and other image-heavy pages. It sends rendered page imagery to the configured
-OpenAI endpoint, so use it only when the document can leave the local machine.
+When enabled, Image Agent can interpret detected visual content such as maps,
+figures, stamps, diagrams, charts, screenshots, scanned forms, and image-backed
+tables. Captions and figure titles are used only as context; they do not trigger
+Image Agent without an actual visual block. It sends rendered page imagery to
+the configured OpenAI endpoint, so use it only when the document can leave the
+local machine.
 
 ## CLI Pipeline
 

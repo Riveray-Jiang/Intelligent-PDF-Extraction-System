@@ -10,6 +10,7 @@ from backend.product_server import JobRecord
 from backend.product_server import JobStore
 from backend.product_server import ARTIFACT_FILENAMES
 from backend.product_server import IMAGE_AGENT_CACHE_VERSION
+from backend.product_server import ProductRequestHandler
 from backend.product_server import _looks_like_bad_reliable_override
 from backend.product_server import _parse_multipart_form_data
 from backend.product_server import artifact_paths_for_output_dir
@@ -233,6 +234,89 @@ def test_image_agent_preview_module_matches_product_server_compatibility_import(
     )
 
     assert extract_image_agent_preview_from_module(page) == extract_image_agent_preview(page)
+
+
+def test_image_agent_endpoint_rejects_caption_only_page_without_calling_agent(monkeypatch, tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    output_dir = tmp_path / "run" / "output"
+    page = Page(
+        page_index=0,
+        blocks=[
+            Block(id="title", type="figure_title", text="Figure 1. Process flow", page_index=0, order=0),
+            Block(id="caption", type="image_caption", text="Factory site photo", page_index=0, order=1),
+        ],
+    )
+    sent: dict[str, object] = {}
+
+    class FakeImageAgent:
+        enabled = True
+
+        def generate_page_record(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            raise AssertionError("caption-only pages must not call Image Agent")
+
+    handler = object.__new__(ProductRequestHandler)
+    handler._read_json = lambda: {"page": 1}  # type: ignore[attr-defined]
+    handler._send_text = lambda text, status=200: sent.update({"text": text, "status": status})  # type: ignore[attr-defined]
+    handler._send_json = lambda payload, status=200: sent.update({"json": payload, "status": status})  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(product_server, "IMAGE_AGENT", FakeImageAgent())
+    monkeypatch.setattr(product_server, "resolve_page_preview_output", lambda current_job, page_number, run_id=None: (output_dir, "run_demo"))
+    monkeypatch.setattr(product_server, "load_page_preview_source", lambda current_output_dir, page_index: (page, {}, "test", {}))
+
+    handler._handle_image_agent(job)
+
+    assert sent["status"] == product_server.HTTPStatus.CONFLICT
+    assert "detected visual content" in str(sent["text"])
+
+
+def test_image_agent_endpoint_generates_visual_page_without_force(monkeypatch, tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    output_dir = tmp_path / "run" / "output"
+    page = Page(
+        page_index=0,
+        blocks=[Block(id="image", type="image", text="", page_index=0, order=0)],
+    )
+    calls: list[dict[str, object]] = []
+    sent: dict[str, object] = {}
+
+    class FakeImageAgent:
+        enabled = True
+
+        def generate_page_record(self, page_model, *, pdf_path, source_name=None, force=False):  # noqa: ANN001
+            calls.append(
+                {
+                    "page": page_model,
+                    "pdf_path": pdf_path,
+                    "source_name": source_name,
+                    "force": force,
+                }
+            )
+            return (
+                {
+                    "generated": True,
+                    "has_meaningful_image": False,
+                    "summary": None,
+                    "markdown": None,
+                    "language": "en",
+                    "image_kind": "diagram",
+                },
+                {},
+            )
+
+    handler = object.__new__(ProductRequestHandler)
+    handler._read_json = lambda: {"page": 1}  # type: ignore[attr-defined]
+    handler._send_text = lambda text, status=200: sent.update({"text": text, "status": status})  # type: ignore[attr-defined]
+    handler._send_json = lambda payload, status=200: sent.update({"json": payload, "status": status})  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(product_server, "IMAGE_AGENT", FakeImageAgent())
+    monkeypatch.setattr(product_server, "resolve_page_preview_output", lambda current_job, page_number, run_id=None: (output_dir, "run_demo"))
+    monkeypatch.setattr(product_server, "load_page_preview_source", lambda current_output_dir, page_index: (page, {}, "test", {}))
+
+    handler._handle_image_agent(job)
+
+    assert sent["status"] == 200
+    assert calls and calls[0]["force"] is False
+    assert sent["json"]["page_number"] == 1  # type: ignore[index]
 
 
 def test_parse_multipart_form_data_reads_file_and_fields() -> None:

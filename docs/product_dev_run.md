@@ -114,6 +114,11 @@ documentation assets in the repository.
 
 If `.env` contains `OPENAI_API_KEY`, the Image Agent endpoint is enabled.
 
+Image Agent is a visual-content tool. It runs only for pages where the backend
+detects an actual visual block (`image`, `figure`, or `image_body`). Captions and
+figure titles help guide the reading but do not trigger an external call by
+themselves.
+
 Do not trigger Image Agent during sensitive-document testing unless the document
 is allowed to be sent to OpenAI.
 

@@ -1155,9 +1155,9 @@ export default function App() {
   )
   const imageAgentEnabled = Boolean(job?.image_agent?.enabled)
   const artifactImageAgent = useMemo(() => readArtifactImageAgentMeta(artifactPreviewData), [artifactPreviewData])
+  const artifactCanGenerateImageAgent = Boolean(imageAgentEnabled && artifactPreviewData?.image_content_detected)
   const artifactHasImageAgentAction = Boolean(
-    imageAgentEnabled ||
-      artifactPreviewData?.image_content_detected ||
+    artifactCanGenerateImageAgent ||
       artifactImageAgent ||
       artifactImageAgentError ||
       artifactImageAgentLoading ||
@@ -3022,7 +3022,7 @@ export default function App() {
                                   <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-700">
                                     Image checked. No extra structure found.
                                   </div>
-                                ) : imageAgentEnabled ? (
+                                ) : artifactCanGenerateImageAgent ? (
                                   <button
                                     type="button"
                                     onClick={() => artifactPage !== null && void handleGenerateImageAgent(artifactPage)}

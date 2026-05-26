@@ -554,6 +554,13 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
             return
 
         page_model, _, _, _ = preview_source
+        page_model = apply_local_image_fallback(job, output_dir, page_number, page_model)
+        if not page_has_image_content(page_model):
+            self._send_text(
+                "Image Agent only runs on pages with detected visual content.",
+                status=HTTPStatus.CONFLICT,
+            )
+            return
 
         cached_record = load_image_agent_cache_record(job, page_number, output_dir=output_dir)
         if cached_record is None:
@@ -562,7 +569,6 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
                     page_model,
                     pdf_path=job.input_pdf,
                     source_name=job.original_filename,
-                    force=True,
                 )
             except Exception as exc:
                 self._send_text(f"Image Agent failed: {exc}", status=HTTPStatus.BAD_GATEWAY)
@@ -738,7 +744,8 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
         if preview_source is not None:
             page_model, block_types, source_engine, page_ir = preview_source
             page_model = apply_local_image_fallback(job, output_dir, page_number, page_model)
-            cached_record = load_image_agent_cache_record(job, page_number, output_dir=output_dir)
+            has_image_content = page_has_image_content(page_model)
+            cached_record = load_image_agent_cache_record(job, page_number, output_dir=output_dir) if has_image_content else None
             payload.update(
                 {
                     "in_document_ir": True,
@@ -747,10 +754,10 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
                     "source_engine": source_engine,
                     "page_markdown": page_to_preview_markdown(page_model),
                     "page_ir": page_model_to_payload(page_model),
-                    "image_content_detected": page_has_image_content(page_model),
+                    "image_content_detected": has_image_content,
                     "image_hint": (
                         "This page is mainly image-based. Use the original page as the primary reference."
-                        if page_has_image_content(page_model)
+                        if has_image_content
                         else None
                     ),
                     **extract_image_agent_preview(page_model, cached_record),
