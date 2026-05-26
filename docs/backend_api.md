@@ -1,391 +1,411 @@
 # Backend API
 
-> Module: [src/backend/product_server.py](../src/backend/product_server.py)
-> Service: PDFProductServer/0.1
-> Purpose: HTTP backend for the PDF extraction product. Handles upload → ingest → run pipeline → poll status → fetch artifacts.
+Service: `PDFProductServer/0.1`
 
-## 1. Overview
+Default bind: `http://127.0.0.1:8892`
 
-Single-process multithreaded HTTP server built on the standard library `ThreadingHTTPServer` — no web framework. Default bind: `127.0.0.1:8892`.
+Primary module: [src/backend/product_server.py](../src/backend/product_server.py)
 
-Start it with:
+The backend is a local `ThreadingHTTPServer` API for the PDF extraction product.
+It handles upload, synchronous ingestion, background extraction runs, status
+polling, output previews, run history, merged output, and artifact download.
 
-```powershell
-.\scripts\run_product_server.ps1 -BindHost 127.0.0.1 -Port 8892
-# or
-$env:PYTHONPATH = "src"
-python -m backend.product_server --host 127.0.0.1 --port 8892
+There is no authentication. Keep the service on localhost unless it is placed
+behind a proper reverse proxy and access-control layer.
+
+## Runtime Components
+
+| Module | Responsibility |
+| --- | --- |
+| `product_server.py` | HTTP routing and request/response handling |
+| `job_store.py` | job manifests, in-memory job cache, subprocess lifecycle |
+| `pipeline_command.py` | product-server to pipeline CLI command builder |
+| `output_planner.py` | effective output selection across fast and repair runs |
+| `merged_output.py` | merged final IR, markdown, and zip output |
+| `file_history.py` | file-version and run-history payloads |
+| `pipeline_graph.py` | extraction pipeline orchestration |
+
+## Disk Layout
+
+Each upload creates a job under `data/jobs/<job_id>/`:
+
+```text
+data/jobs/job_<timestamp>_<hex>/
+  <uploaded>.pdf
+  job_manifest.json
+  ingestion/
+    ingestion_output.json
+    thumbnails/page_*.jpg
+    previews/page_*.jpg
+  last_run_stdout.log
+  last_run_stderr.log
+  runs/
+    run_<timestamp>_<mode>_<hex>/
+      stdout.log
+      stderr.log
+      output/
+        document_ir.json
+        document.md
+        validation_report.json
+        pipeline_state.json
+        parse/<engine>/...
 ```
 
-CORS is wide open (`*`), methods `GET, POST, OPTIONS`. There is **no auth** — do not expose the port outside localhost without a reverse proxy.
+Run history is appended to `data/run_history.jsonl`.
 
-### Disk layout
+`data/jobs/`, `data/benchmarks/`, `reports/`, and `tmp/` are runtime output and
+are ignored by Git.
 
-Each upload becomes a **Job** rooted at `data/jobs/<job_id>/`:
+## Job Lifecycle
 
-```
-data/jobs/job_<ts>_<8hex>/
-├── <original>.pdf
-├── job_manifest.json              # persisted job state
-├── ingestion/
-│   ├── ingestion_output.json      # page count / outline / sizes
-│   ├── thumbnails/page_*.jpg      # rendered up-front
-│   └── previews/page_*.jpg        # rendered on demand, cached
-├── last_run_stdout.log
-├── last_run_stderr.log
-└── runs/run_<ts>_<mode>_<6hex>/
-    ├── stdout.log
-    ├── stderr.log
-    └── output/
-        ├── document_ir.json       # main artifact (structured IR)
-        ├── document.md            # main artifact (markdown export)
-        ├── validation_report.json
-        ├── pipeline_state.json
-        └── parse/<engine>/...     # raw engine output
-data/run_history.jsonl              # append-only audit log
-```
+| Status | Meaning |
+| --- | --- |
+| `preparing` | PDF saved and ingestion is running |
+| `ready` | ingestion completed and the job can be run |
+| `running` | extraction subprocess is active |
+| `completed` | subprocess exited with code 0 |
+| `failed` | subprocess failed or crashed before startup |
+| `canceled` | user requested cancellation and the process tree was stopped |
 
-### Job lifecycle
+`stage` and `progress_percent` are derived from the job state and output files.
+The pipeline is polled; it does not stream progress.
 
-| `status`    | Meaning                                                           |
-| ----------- | ----------------------------------------------------------------- |
-| `preparing` | File saved, ingestion in progress                                 |
-| `ready`     | Ingestion done, waiting for the user to pick pages and run        |
-| `running`   | Pipeline subprocess is alive                                      |
-| `completed` | Subprocess exit code 0                                            |
-| `failed`    | Subprocess exit code ≠ 0                                          |
-| `canceled`  | Cancelled by the user; subprocess tree was killed                 |
+## Run Modes
 
-`stage` and `progress_percent` are inferred on each `/status` call from which intermediate files exist on disk (parse subdir → IR → validation report → pipeline state). The pipeline does not push progress.
+| Mode | Product behavior | Config |
+| --- | --- | --- |
+| `fast` | production MinerU service parser | `configs/engines_prod.yaml` |
+| `reliable` | stronger MinerU 2.5 Pro repair profile for selected pages | `configs/engines_prod_repair.yaml` |
 
-### How runs work
+The product server prevents duplicate fast runs for pages that already have fast
+output and only allows reliable repair for pages already present in the current
+merged output.
 
-`POST /run` does **not** execute the algorithm in the request thread. It:
-1. Builds a `python -m backend.pipeline_graph ...` command via [build_pipeline_command](../src/backend/product_server.py#L41-L89).
-2. Spawns a daemon thread that `subprocess.Popen`s the pipeline.
-3. Pipes stdout/stderr to log files; `/status` tails them.
-4. On exit, updates `status` and appends one line to `run_history.jsonl`.
+## Endpoint Summary
 
-`run_mode` controls which engines run:
-- `fast` → MinerU pipeline only (`configs/engines_prod.yaml`)
-- `reliable` → MinerU + Paddle cascade repair (`configs/engines_prod_vlm_repair.yaml`)
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | liveness probe |
+| `POST` | `/api/upload` | upload PDF and create a job |
+| `GET` | `/api/jobs/{job_id}/session` | restore full frontend session |
+| `GET` | `/api/jobs/{job_id}/status` | current job status snapshot |
+| `GET` | `/api/jobs/{job_id}/runs` | completed run history for the job |
+| `GET` | `/api/jobs/{job_id}/file-history` | file-version and merged-output summary |
+| `POST` | `/api/jobs/{job_id}/run` | start fast or reliable extraction |
+| `POST` | `/api/jobs/{job_id}/cancel` | cancel active extraction |
+| `POST` | `/api/jobs/{job_id}/image-agent` | generate page-level image interpretation |
+| `GET` | `/api/jobs/{job_id}/page-preview?page=N` | page markdown and IR preview |
+| `GET` | `/api/jobs/{job_id}/thumb/{filename}` | pre-rendered thumbnail |
+| `GET` | `/api/jobs/{job_id}/preview/{filename}` | high-resolution page preview |
+| `GET` | `/api/jobs/{job_id}/artifact/{name}` | latest run artifact |
+| `GET` | `/api/jobs/{job_id}/runs/{run_id}/artifact/{name}` | artifact from a specific run |
+| `GET` | `/api/jobs/{job_id}/merged-artifact/{name}` | merged final `document.md` or `document_ir.json` |
+| `GET` | `/api/jobs/{job_id}/download-output.zip` | merged output bundle |
+| `OPTIONS` | any path | CORS preflight |
 
-Cancel uses `CTRL_BREAK_EVENT` + `taskkill /T /F` on Windows, `SIGTERM` then `SIGKILL` on POSIX, so the whole process tree is reaped.
-
----
-
-## 2. Endpoint summary
-
-| Method  | Path                                            | Purpose                          |
-| ------- | ----------------------------------------------- | -------------------------------- |
-| GET     | `/api/health`                                   | Liveness probe                   |
-| POST    | `/api/upload`                                   | Upload PDF, create job, ingest   |
-| GET     | `/api/jobs/{id}/session`                        | Full session payload             |
-| GET     | `/api/jobs/{id}/status`                         | Live status snapshot             |
-| POST    | `/api/jobs/{id}/run`                            | Start the pipeline               |
-| POST    | `/api/jobs/{id}/cancel`                         | Cancel the running pipeline      |
-| GET     | `/api/jobs/{id}/page-preview?page=N`            | Per-page IR / markdown preview   |
-| GET     | `/api/jobs/{id}/thumb/{filename}`               | Page thumbnail (jpg)             |
-| GET     | `/api/jobs/{id}/preview/page_NNNN.jpg`          | High-res preview, rendered lazily|
-| GET     | `/api/jobs/{id}/artifact/{name}`                | Download a pipeline artifact     |
-| OPTIONS | any                                             | CORS preflight                   |
-
-Routing: [do_GET](../src/backend/product_server.py#L741-L769) / [do_POST](../src/backend/product_server.py#L771-L785).
-
----
-
-## 3. Endpoints
+## Endpoints
 
 ### `GET /api/health`
 
-Returns `{"ok": true}`. Use for liveness checks.
+Returns:
+
+```json
+{"ok": true}
+```
 
 ### `POST /api/upload`
 
-Uploads a PDF, creates a job, runs ingestion synchronously (renders thumbnails, extracts outline), returns the full session.
+Accepts either:
 
-**Request** — either:
-- `multipart/form-data` with field `file` (recommended), or
-- raw `application/pdf` / `application/octet-stream` body.
+- `multipart/form-data` with a `file` field
+- raw `application/pdf` or `application/octet-stream`
 
-Filenames are sanitized to `[A-Za-z0-9._-]`.
+Optional multipart field:
 
-**Response `201`**
+- `replaces_job_id`: creates a new file version in the same document family
+
+Response `201`:
 
 ```json
 {
-  "job_id": "job_20260410_120355_a1b2c3d4",
+  "job_id": "job_20260526_165227_2fd470bc",
   "session": {
-    "job_id": "job_...",
-    "input_pdf_name": "paper.pdf",
-    "page_count": 42,
-    "has_outline": true,
-    "default_selection_mode": "outline",
-    "pages": [{ "page_index": 0 }, "..."],
-    "outline": [
-      { "id": 1, "title": "Introduction", "page_index": 0, "level": 0 }
-    ],
-    "job": { "<status snapshot, see /status>": "..." }
+    "job_id": "job_20260526_165227_2fd470bc",
+    "document_id": "job_20260526_165227_2fd470bc",
+    "file_version": 1,
+    "input_pdf_name": "demo.pdf",
+    "page_count": 1,
+    "default_selection_mode": "all",
+    "pages": [{"page_index": 0}],
+    "outline": [],
+    "job": {}
   }
 }
 ```
 
-`default_selection_mode` is `"outline"` if the PDF has bookmarks, otherwise `"all"`.
+Errors:
 
-**Errors:** 400 (missing/empty file or wrong content type), 500 (ingest failure).
+- `400`: missing body, empty file, or unsupported content type
+- `500`: ingestion failed
 
-> Note: ingestion is synchronous, so this call scales with page count. Set a generous client timeout.
+Ingestion is synchronous. Large PDFs can make upload slow because thumbnails and
+page metadata are generated before the response is returned.
 
-### `GET /api/jobs/{id}/session`
+### `GET /api/jobs/{job_id}/session`
 
-Returns the same `session` payload as upload. Use this to restore state when the user reloads. If the job isn't in memory, it's rehydrated from `job_manifest.json` (see [JobStore._load_job_from_disk](../src/backend/product_server.py#L393-L454)). 404 if unknown.
+Returns the same session shape as upload. If the job is not in memory, the
+server attempts to rehydrate it from `job_manifest.json` and
+`ingestion/ingestion_output.json`.
 
-### `GET /api/jobs/{id}/status`
+### `GET /api/jobs/{job_id}/status`
 
-Poll this every 1–2 seconds while a job is running.
+Returns the current status snapshot:
 
 ```json
 {
   "job_id": "job_...",
   "status": "running",
-  "stage": "Running first pass",
+  "message": "Extracting selected pages.",
+  "stage": "Running fast",
   "progress_percent": 38,
-  "message": "Running first pass",
+  "output_dir": "data/jobs/.../runs/run_.../output",
+  "run_id": "run_...",
+  "selection_mode": "pagerange",
+  "selection": "1",
   "run_mode": "fast",
-  "selection_mode": "outline",
-  "selection": "1-3",
-  "engines": { "primary": "mineru", "fallback": "paddle" },
-  "cascade_attempt": 0,
-  "failed_pages_count": null,
-  "log_tail": "INFO ParseAgent ...",
   "returncode": null,
-  "started_at": "2026-04-10T12:04:10Z",
+  "started_at": "2026-05-26T16:52:28Z",
   "finished_at": null,
+  "duration_sec": null,
   "cancel_requested": false,
-  "artifacts": {
-    "document_ir.json": "/api/jobs/<id>/artifact/document_ir.json",
-    "document.md":      "/api/jobs/<id>/artifact/document.md"
-  }
+  "log_tail": null,
+  "engines": {"primary": "mineru"},
+  "cascade_attempt": 0,
+  "failed_pages_count": 0,
+  "image_agent": {
+    "enabled": false,
+    "name": "Image Agent",
+    "model": null
+  },
+  "artifacts": {}
 }
 ```
 
-Notes:
-- `stage` / `progress_percent` step through `8 → 38 → 68 → 82 → 92 → 100` as intermediate files appear.
-- `log_tail` is the last non-empty line of stderr (then stdout), capped at 280 chars.
-- `cascade_attempt` and `failed_pages_count` are read live from `pipeline_state.json` and `validation_report.json`.
-- `artifacts` only contains keys for files that already exist — don't assume all four are present.
+Poll every 1-2 seconds while `status` is `running`.
 
-### `POST /api/jobs/{id}/run`
+### `GET /api/jobs/{job_id}/runs`
 
-Starts the pipeline. The job must not already be `running`.
-
-**Body**
+Returns recent run history:
 
 ```json
 {
-  "selection_mode": "all | outline | pagerange",
-  "selection":      "1-3,5,8-12",
-  "run_mode":       "fast | reliable",
-  "output_dir":     "optional, defaults to <job_dir>/runs"
+  "runs": [
+    {
+      "job_id": "job_...",
+      "run_id": "run_...",
+      "status": "completed",
+      "run_mode": "fast",
+      "selection_mode": "pagerange",
+      "selection": "1",
+      "resolved_pages": [1],
+      "duration_sec": 6.0,
+      "output_dir": "data/jobs/.../output",
+      "artifact_urls": {
+        "document_ir.json": "/api/jobs/<job_id>/runs/<run_id>/artifact/document_ir.json"
+      }
+    }
+  ]
 }
 ```
 
-| Field            | Default                          | Notes                                              |
-| ---------------- | -------------------------------- | -------------------------------------------------- |
-| `selection_mode` | `"all"`                          | Forwarded to `pipeline_graph --selection-mode`     |
-| `selection`      | `null`                           | Range expression for `pagerange`/`outline` modes   |
-| `run_mode`       | previous run's mode, else `fast` | `fast` = primary only; `reliable` = + cascade      |
-| `output_dir`     | `<job_dir>/runs`                 | Final path is `<output_dir>/run_<ts>_<mode>_<hex>/output` |
+The endpoint reads `data/run_history.jsonl`, newest first.
 
-**Response `202`** — status snapshot, `status="running"`. Start polling immediately.
+### `GET /api/jobs/{job_id}/file-history`
 
-**Errors:** 400 (bad JSON / unknown `run_mode`), 404 (no such job), 409 (a run is already in progress).
-
-### `POST /api/jobs/{id}/cancel`
-
-No body. Returns `202` with the snapshot (`cancel_requested=true`, `stage="Canceling"`). Once the subprocess tree is reaped the next `/status` will report `status="canceled"`. Returns `409` if nothing is running.
-
-### `GET /api/jobs/{id}/page-preview?page=<1-based>`
-
-Per-page summary read from `document_ir.json`. Used for the right-hand markdown panel.
+Returns the known file versions for the document family and the merged output
+state for each version:
 
 ```json
 {
-  "page_number": 3,
-  "page_index": 2,
+  "document_id": "doc_...",
+  "current_job_id": "job_...",
+  "versions": [
+    {
+      "job_id": "job_...",
+      "file_version": 1,
+      "filename": "demo.pdf",
+      "is_current": true,
+      "has_output": true,
+      "latest_output_pages": [1],
+      "effective_page_run_ids": {"1": "run_..."},
+      "merged_artifact_urls": {
+        "document.md": "/api/jobs/<job_id>/merged-artifact/document.md",
+        "document_ir.json": "/api/jobs/<job_id>/merged-artifact/document_ir.json"
+      },
+      "runs": []
+    }
+  ]
+}
+```
+
+### `POST /api/jobs/{job_id}/run`
+
+Starts a background extraction subprocess.
+
+Request:
+
+```json
+{
+  "selection_mode": "pagerange",
+  "selection": "1-3,5",
+  "run_mode": "fast",
+  "output_dir": "optional/root/output/path"
+}
+```
+
+Fields:
+
+| Field | Values | Default |
+| --- | --- | --- |
+| `selection_mode` | `all`, `outline`, `pagerange` | `all` |
+| `selection` | page expression or outline ids | `null` |
+| `run_mode` | `fast`, `reliable` | previous job mode or `fast` |
+| `output_dir` | output root | job `runs/` directory |
+
+Response `202` is a status snapshot with `status="running"`.
+
+Errors:
+
+- `400`: invalid JSON or unknown run mode
+- `409`: duplicate page run, unavailable repair page, or job already running
+
+### `POST /api/jobs/{job_id}/cancel`
+
+Cancels the active subprocess tree and returns a status snapshot. Returns `409`
+if the job is not running.
+
+### `GET /api/jobs/{job_id}/page-preview?page=N`
+
+Returns page-level preview data from the effective output run:
+
+```json
+{
+  "run_id": "run_...",
+  "page_number": 1,
+  "page_index": 0,
   "in_document_ir": true,
-  "block_count": 17,
-  "block_types": { "text": 12, "table": 1, "figure": 2, "figure_title": 2 },
+  "block_count": 9,
+  "block_types": {"text": 8, "table": 1},
   "source_engine": "mineru",
-  "page_markdown": "## 2.1 Methods\n\n...",
-  "visual_content_detected": true,
-  "visual_hint": "This page is mainly visual. Use the page preview as the primary reference."
+  "page_markdown": "...",
+  "page_ir": {},
+  "image_content_detected": false,
+  "image_hint": null,
+  "image_alt_text": null,
+  "image_interpretation_markdown": null,
+  "image_agent_language": null,
+  "image_agent_kind": null,
+  "image_agent_generated": false,
+  "image_agent_empty": false
 }
 ```
 
-If the IR doesn't exist yet, the same shape comes back with `in_document_ir=false`, `block_count=null`, `page_markdown=""`. 400 if `page` is missing/invalid.
+Optional query:
 
-### `GET /api/jobs/{id}/thumb/{filename}`
+- `run_id=<run_id>`: preview a specific run instead of effective merged output
 
-Serves a pre-rendered thumbnail (e.g. `page_0001.jpg`) from `ingestion/thumbnails/`. `Cache-Control: public, max-age=3600`. 404 if missing.
+### `POST /api/jobs/{job_id}/image-agent`
 
-### `GET /api/jobs/{id}/preview/page_NNNN.jpg`
+Request:
 
-Serves a high-res page image. Rendered lazily at 150 DPI by `pypdfium2` on the first request and cached to `ingestion/previews/`. 400 (bad name), 404 (page out of range), 500 (render failure).
-
-### `GET /api/jobs/{id}/artifact/{name}`
-
-Whitelist of 4 artifacts (see [_serve_artifact](../src/backend/product_server.py#L951-L967)):
-
-| `name`                   | Content-Type     |
-| ------------------------ | ---------------- |
-| `document_ir.json`       | application/json |
-| `document.md`            | text/markdown    |
-| `validation_report.json` | application/json |
-| `pipeline_state.json`    | application/json |
-
-404 if the name isn't whitelisted or the file hasn't been produced yet.
-
----
-
-## 4. Data models
-
-Defined with Pydantic v2 in [src/backend/types.py](../src/backend/types.py).
-
-**DocumentIR**
-
-```jsonc
+```json
 {
-  "doc_id": "string",
-  "source_file": "string",
-  "source_engine": "mineru | paddle",
-  "generated_at": "ISO-8601",
-  "pages": [{
-    "page_index": 0,
-    "width": 612,
-    "height": 792,
-    "blocks": [{
-      "id": "p0_b0",
-      "type": "text | title | table | figure | figure_title | image | image_caption | ...",
-      "text": "string",
-      "bbox": [x0, y0, x1, y1],
-      "order": 0,
-      "confidence": 0.97,
-      "source": { "engine": "mineru", "raw_type": "..." },
-      "page_index": 0
-    }]
-  }]
+  "page": 1,
+  "run_id": "optional"
 }
 ```
 
-**ValidationReport**
+Runs Image Agent for one page and returns the same image interpretation fields
+used by page preview. This endpoint requires `OPENAI_API_KEY`; otherwise it
+returns `409`.
 
-```jsonc
-{
-  "empty_page_rate": 0.02,
-  "order_anomaly_rate": 0.0,
-  "table_anomaly_rate": 0.05,
-  "coverage_rate": 0.98,
-  "non_blank_pages": 40,
-  "pages_with_content": 41,
-  "empty_pages": 1,
-  "anomalous_order_pages": 0,
-  "total_tables": 12,
-  "anomalous_tables": 1,
-  "failed_pages": [17],
-  "pass_quality_floor": true
-}
+Because this sends rendered page imagery to OpenAI, call it only for documents
+that are allowed to leave the local machine.
+
+### Artifact Endpoints
+
+Whitelisted artifact names:
+
+- `document_ir.json`
+- `document.md`
+- `validation_report.json`
+- `pipeline_state.json`
+
+Endpoints:
+
+- `GET /api/jobs/{job_id}/artifact/{name}`: latest job output artifact
+- `GET /api/jobs/{job_id}/runs/{run_id}/artifact/{name}`: specific run artifact
+- `GET /api/jobs/{job_id}/merged-artifact/document.md`
+- `GET /api/jobs/{job_id}/merged-artifact/document_ir.json`
+- `GET /api/jobs/{job_id}/download-output.zip`
+
+`download-output.zip` contains:
+
+- `document.md`
+- `document_ir.json`
+- `metadata.json`
+- `pages/page_XXXX.md`
+
+### Image Preview Endpoints
+
+- `GET /api/jobs/{job_id}/thumb/{filename}` serves pre-rendered thumbnails.
+- `GET /api/jobs/{job_id}/preview/page_NNNN.jpg` renders a higher-resolution
+  preview lazily with `pypdfium2` and caches it under `ingestion/previews/`.
+
+## HTTP to Pipeline Mapping
+
+`JobStore.start_run` builds a command equivalent to:
+
+```powershell
+python -m backend.pipeline_graph `
+  --input "<uploaded.pdf>" `
+  --engine mineru `
+  --selection-mode pagerange `
+  --selection "1" `
+  --output-dir "<job>/runs/<run_id>/output" `
+  --engine-config configs/engines_prod.yaml `
+  --max-parse-attempts 1 `
+  --max-rerun-attempts 0
 ```
 
-`failed_pages` drives cascade repair; `pass_quality_floor` is the final gate against `configs/quality_floor.yaml`.
+For `run_mode="reliable"`, the command still uses `engine=mineru`, but the job
+selects `configs/engines_prod_repair.yaml`, which points at the MinerU 2.5 Pro
+repair service.
 
-**pipeline_state.json**
+## Operational Notes
 
-```jsonc
-{
-  "manual_review_required": false,
-  "parse_error": null,
-  "parse_attempt": 1,
-  "rerun_attempt": 0,
-  "cascade_attempt": 1,
-  "cascade_active": true,
-  "engine": "mineru"
-}
-```
+- Docker service prewarm happens at server startup unless `--skip-prewarm` is
+  passed.
+- Existing parser containers are restarted automatically when they are running
+  but fail their health check.
+- Parser timeouts are long-running parse limits, not product-server request
+  timeouts.
+- `run_history.jsonl` is append-only and should be rotated externally for long
+  lived deployments.
+- The in-memory job cache can rehydrate completed jobs from disk, but it cannot
+  supervise subprocesses that were already running before the server restarted.
 
----
+## Files Worth Reading First
 
-## 5. Typical flow
-
-```
-Frontend                                     Backend
-  │  POST /api/upload (file)                    │
-  │ ──────────────────────────────────────────▶│  create_job → ingest (sync)
-  │ ◀───────────────────────────────────── 201 │  { job_id, session }
-  │                                              │
-  │  POST /api/jobs/<id>/run                    │
-  │   { selection_mode, selection, run_mode }   │
-  │ ──────────────────────────────────────────▶│  spawn pipeline subprocess
-  │ ◀───────────────────────────────────── 202 │  status=running
-  │                                              │
-  │  GET /api/jobs/<id>/status   (poll 1–2s)    │
-  │ ──────────────────────────────────────────▶│
-  │ ◀───────────────────────────────────── 200 │  status / stage / log_tail / artifacts
-  │                                              │
-  │  GET /api/jobs/<id>/artifact/document.md    │
-  │ ──────────────────────────────────────────▶│
-  │ ◀───────────────────────────────────── 200 │
-```
-
-To restore a session after a reload, just call `GET /api/jobs/<id>/session` with the saved `job_id`.
-
----
-
-## 6. HTTP ↔ pipeline CLI mapping
-
-The backend is a thin wrapper around the `pipeline_graph` CLI. To reproduce a run by hand:
-
-| HTTP                              | CLI flag                                                       |
-| --------------------------------- | -------------------------------------------------------------- |
-| uploaded PDF                      | `--input <pdf>`                                                |
-| (hardcoded)                       | `--engine mineru`                                              |
-| `selection_mode`                  | `--selection-mode <all\|outline\|pagerange>`                   |
-| `selection`                       | `--selection "<expr>"` (only when non-empty)                   |
-| `output_dir`                      | `--output-dir <dir>`                                           |
-| (hardcoded)                       | `--engine-config configs/engines_prod.yaml`                    |
-| `max_parse_attempts=1`            | `--max-parse-attempts 1`                                       |
-| `max_rerun_attempts=0`            | `--max-rerun-attempts 0`                                       |
-| `run_mode == "reliable"`          | `--cascade-enabled --cascade-engine paddle --cascade-engine-config configs/engines_prod_vlm_repair.yaml --max-cascade-attempts 1` |
-
-Exit code mapping: `0 → completed`, non-zero → `failed`, killed by signal → `canceled`.
-
----
-
-## 7. Known limitations / handover TODO
-
-1. **No auth, no rate limiting.** Anyone who can reach the port can upload PDFs and trigger runs. Put it behind a reverse proxy before exposing it.
-2. **Synchronous ingestion.** `/api/upload` blocks while thumbnails render — slow for large PDFs. Consider moving ingestion onto the background thread with a new `status="ingesting"`.
-3. **In-process job registry.** `JobStore` only caches in memory; restarting the server loses tracking of any in-flight subprocesses (manifests are still on disk, but the run isn't supervised anymore).
-4. **Hardcoded engines.** Primary/cascade engines and config paths live on `JobRecord` ([product_server.py:210-216](../src/backend/product_server.py#L210-L216)). Switching tracks (A VLM vs B lightweight) currently requires a code change. Easy fix: expose `engine_config` as an optional `/run` field.
-5. **`cgi.FieldStorage` is removed in Python 3.13.** The upload handler needs to move to `python-multipart` or `email.parser` before upgrading.
-6. **Polling only.** No SSE / WebSocket. If you have many concurrent jobs, an SSE stream from `/status` would be cheaper.
-7. **`run_history.jsonl` grows forever.** Add external log rotation if this runs long-term.
-
----
-
-## 8. Files worth reading first
-
-| File | What's in it |
-| ---- | ------------ |
-| [src/backend/product_server.py](../src/backend/product_server.py)     | HTTP server, job state machine, subprocess supervision |
-| [src/backend/pipeline_graph.py](../src/backend/pipeline_graph.py)     | LangGraph pipeline + CLI entrypoint                    |
-| [src/backend/ingestion_agent.py](../src/backend/ingestion_agent.py)   | Page count, outline, thumbnail rendering               |
-| [src/backend/parse_agent.py](../src/backend/parse_agent.py)           | Runs engines via `docker run`                          |
-| [src/backend/ir_builder_agent.py](../src/backend/ir_builder_agent.py) | Engine output → `DocumentIR`                           |
-| [src/backend/validation_agent.py](../src/backend/validation_agent.py) | Produces `ValidationReport`                            |
-| [src/backend/markdown_export.py](../src/backend/markdown_export.py)   | `DocumentIR` → markdown                                |
-| [src/backend/types.py](../src/backend/types.py)                       | Shared Pydantic models                                 |
-| [configs/engines_prod.yaml](../configs/engines_prod.yaml)             | Primary engine config (`fast` mode)                    |
-| [configs/engines_prod_vlm_repair.yaml](../configs/engines_prod_vlm_repair.yaml) | Cascade engine config (`reliable` mode)      |
-
-> Last updated: 2026-04-10. Update §7 when handing over.
+| File | Purpose |
+| --- | --- |
+| [src/backend/product_server.py](../src/backend/product_server.py) | HTTP routes and response serving |
+| [src/backend/job_store.py](../src/backend/job_store.py) | job state and subprocess lifecycle |
+| [src/backend/pipeline_graph.py](../src/backend/pipeline_graph.py) | extraction pipeline |
+| [src/backend/parse_agent.py](../src/backend/parse_agent.py) | parser service execution |
+| [src/backend/ir_builder_agent.py](../src/backend/ir_builder_agent.py) | parser output to DocumentIR |
+| [src/backend/output_planner.py](../src/backend/output_planner.py) | effective output selection |
+| [src/backend/merged_output.py](../src/backend/merged_output.py) | merged final artifacts |
+| [src/backend/types.py](../src/backend/types.py) | shared Pydantic models |
+| [configs/engines_prod.yaml](../configs/engines_prod.yaml) | fast parser service profile |
+| [configs/engines_prod_repair.yaml](../configs/engines_prod_repair.yaml) | reliable repair profile |
