@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import re
@@ -10,7 +9,6 @@ import signal
 import subprocess
 import threading
 import time
-import zipfile
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -51,6 +49,8 @@ from .job_utils import parse_utc
 from .job_utils import sanitize_filename
 from .job_utils import utc_now
 from .local_image_fallback import apply_local_image_fallback
+from .merged_output import build_merged_output as _build_merged_output
+from .merged_output import build_merged_output_bundle as _build_merged_output_bundle
 from .multipart_form import parse_multipart_form_data as _parse_multipart_form_data
 from .output_planner import build_effective_output_plan as _build_effective_output_plan
 from .output_planner import completed_history_entries as _completed_history_entries
@@ -262,100 +262,20 @@ def build_effective_output_plan(job: "JobRecord") -> dict[str, Any] | None:
 
 
 def build_merged_output(job: "JobRecord") -> tuple[dict[str, Any], str] | None:
-    plan = build_effective_output_plan(job)
-    if plan is None:
-        return None
-
-    merged_pages: list[dict[str, Any]] = []
-    merged_markdown_parts: list[str] = []
-    base_metadata: dict[str, Any] | None = None
-
-    for page_number in plan["page_numbers"]:
-        entry = plan["effective_page_runs"].get(page_number)
-        output_dir = entry.get("output_dir") if entry else None
-        if not output_dir:
-            continue
-
-        document_ir = load_document_ir(Path(str(output_dir)) / "document_ir.json")
-        if document_ir is None:
-            continue
-        if base_metadata is None:
-            base_metadata = {key: value for key, value in document_ir.items() if key != "pages"}
-
-        page_index = page_number - 1
-        page_payload = next(
-            (page for page in document_ir.get("pages", []) if int(page.get("page_index", -1)) == page_index),
-            None,
-        )
-        if page_payload is None:
-            continue
-
-        page_model = apply_local_image_fallback(job, Path(str(output_dir)), page_number, build_page_model(page_payload))
-        merged_pages.append(page_model_to_payload(page_model))
-        markdown = page_to_preview_markdown(page_model).strip()
-        if markdown:
-            merged_markdown_parts.append(format_merged_page_markdown(page_number, markdown))
-
-    if not merged_pages:
-        return None
-
-    merged_pages.sort(key=lambda page: int(page.get("page_index", 0)))
-    merged_document_ir = dict(base_metadata or {})
-    merged_document_ir["pages"] = merged_pages
-    merged_document_ir["source_engine"] = "merged"
-    merged_markdown = "\n\n".join(merged_markdown_parts)
-    return merged_document_ir, merged_markdown
+    return _build_merged_output(
+        job,
+        build_effective_output_plan=build_effective_output_plan,
+        apply_local_image_fallback=apply_local_image_fallback,
+    )
 
 
 def build_merged_output_bundle(job: "JobRecord") -> tuple[bytes, str] | None:
-    merged_output = build_merged_output(job)
-    if merged_output is None:
-        return None
-
-    merged_document_ir, merged_markdown = merged_output
-    pages = merged_document_ir.get("pages") if isinstance(merged_document_ir.get("pages"), list) else []
-    page_numbers = sorted(
-        {
-            int(page.get("page_index", 0)) + 1
-            for page in pages
-            if isinstance(page, dict)
-        }
+    return _build_merged_output_bundle(
+        job,
+        build_merged_output_for_job=build_merged_output,
+        sanitize_filename=sanitize_filename,
+        utc_now=utc_now,
     )
-    metadata = {
-        "source_file": job.original_filename,
-        "job_id": job.job_id,
-        "document_id": job.document_id,
-        "file_version": int(job.file_version),
-        "page_count": int(job.ingestion.get("page_count", 0)),
-        "output_pages": page_numbers,
-        "generated_at": utc_now(),
-        "contents": [
-            "document.md",
-            "document_ir.json",
-            "metadata.json",
-            "pages/page_XXXX.md",
-        ],
-    }
-
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as handle:
-        handle.writestr("document.md", merged_markdown)
-        handle.writestr("document_ir.json", json.dumps(merged_document_ir, ensure_ascii=False, indent=2))
-        handle.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
-        for page_payload in pages:
-            if not isinstance(page_payload, dict):
-                continue
-            try:
-                page_model = build_page_model(page_payload)
-                page_markdown = page_to_preview_markdown(page_model).strip()
-                page_number = int(page_model.page_index) + 1
-            except Exception:
-                continue
-            if page_markdown:
-                handle.writestr(f"pages/page_{page_number:04d}.md", page_markdown)
-
-    stem = Path(sanitize_filename(job.original_filename)).stem or "document"
-    return archive.getvalue(), f"{stem}_output.zip"
 
 
 def resolve_output_dir(job: "JobRecord", run_id: str | None = None) -> Path:

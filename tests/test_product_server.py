@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import backend.product_server as product_server
 from backend.product_server import JobRecord
 from backend.product_server import ARTIFACT_FILENAMES
 from backend.product_server import IMAGE_AGENT_CACHE_VERSION
@@ -48,6 +49,12 @@ from backend.job_utils import sanitize_filename as sanitize_filename_from_module
 from backend.job_utils import utc_now as utc_now_from_module
 from backend.job_manifests import load_job_manifest as load_job_manifest_from_module
 from backend.job_manifests import read_document_job_manifests as read_document_job_manifests_from_module
+from backend.merged_output import (
+    build_merged_output as build_merged_output_from_module,
+)
+from backend.merged_output import (
+    build_merged_output_bundle as build_merged_output_bundle_from_module,
+)
 from backend.pipeline_command import build_pipeline_command as build_pipeline_command_from_module
 from backend.pipeline_command import default_selection_mode as default_selection_mode_from_module
 from backend.output_planner import compress_page_numbers as compress_page_numbers_from_module
@@ -425,6 +432,56 @@ def test_output_planner_module_matches_product_server_exports(tmp_path: Path) ->
     assert resolve_output_dir_from_module(job) == resolve_output_dir(job)
     assert resolve_output_dir_from_module(job, "run_other") == resolve_output_dir(job, "run_other")
     assert load_page_preview_source_from_module(output_dir, 0) == load_page_preview_source(output_dir, 0)
+
+
+def test_merged_output_module_matches_product_server_exports(monkeypatch, tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    output_dir = tmp_path / "fast" / "output"
+    _write_document_ir(output_dir, {1: "FAST P1", 2: "FAST P2"})
+    monkeypatch.setattr(
+        "backend.product_server.completed_history_entries",
+        lambda current_job: [
+            {
+                "run_id": "run_fast",
+                "run_mode": "fast",
+                "status": "completed",
+                "selection_mode": "pagerange",
+                "selection": "1-2",
+                "output_dir": str(output_dir),
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "backend.product_server.utc_now",
+        lambda: "2026-05-26T12:00:00Z",
+    )
+
+    module_merged = build_merged_output_from_module(
+        job,
+        build_effective_output_plan=product_server.build_effective_output_plan,
+        apply_local_image_fallback=product_server.apply_local_image_fallback,
+    )
+
+    assert module_merged == build_merged_output(job)
+
+    module_bundle = build_merged_output_bundle_from_module(
+        job,
+        build_merged_output_for_job=(
+            lambda current_job: module_merged if current_job is job else None
+        ),
+        sanitize_filename=product_server.sanitize_filename,
+        utc_now=product_server.utc_now,
+    )
+    server_bundle = build_merged_output_bundle(job)
+
+    assert module_bundle is not None
+    assert server_bundle is not None
+    assert module_bundle[1] == server_bundle[1] == "demo_output.zip"
+    with zipfile.ZipFile(io.BytesIO(module_bundle[0])) as module_archive:
+        with zipfile.ZipFile(io.BytesIO(server_bundle[0])) as server_archive:
+            assert set(module_archive.namelist()) == set(server_archive.namelist())
+            for name in module_archive.namelist():
+                assert module_archive.read(name) == server_archive.read(name)
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
