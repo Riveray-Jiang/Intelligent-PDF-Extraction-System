@@ -79,6 +79,12 @@ class EngineServiceManager:
             detail = (result.stderr or result.stdout or "").strip()[-500:]
             raise RuntimeError(f"Failed to start existing service container {name}: {detail}")
 
+    def _docker_restart_existing(self, name: str) -> None:
+        result = self._run_subprocess(["docker", "restart", name], timeout_sec=180)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[-500:]
+            raise RuntimeError(f"Failed to restart service container {name}: {detail}")
+
     def _wait_for_health(self, url: str, startup_timeout_sec: int) -> None:
         deadline = time.time() + max(10, int(startup_timeout_sec))
         last_error = "health endpoint not ready"
@@ -148,13 +154,20 @@ class EngineServiceManager:
         container_name = str(service_cfg.get("container_name", "")).strip()
         image = str(engine_cfg.get("image", "")).strip()
         startup_timeout_sec = int(service_cfg.get("startup_timeout_sec", 600) or 600)
+        running_health_timeout_sec = int(
+            service_cfg.get("running_health_timeout_sec", min(startup_timeout_sec, 60)) or startup_timeout_sec
+        )
         if not service_type or not port or not container_name or not image:
             raise RuntimeError(f"Incomplete service config for engine={engine}")
 
         health_path = str(service_cfg.get("health_path", "/health")).strip() or "/health"
         health_url = f"http://{host}:{port}{health_path}"
         if self._docker_container_running(container_name):
-            self._wait_for_health(health_url, startup_timeout_sec)
+            try:
+                self._wait_for_health(health_url, running_health_timeout_sec)
+            except RuntimeError:
+                self._docker_restart_existing(container_name)
+                self._wait_for_health(health_url, startup_timeout_sec)
             return {"url": f"http://{host}:{port}", "health_url": health_url, "service_type": service_type}
 
         if self._docker_container_exists(container_name):

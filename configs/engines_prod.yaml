@@ -10,6 +10,7 @@
       port: 19100
       container_name: pdf-agent-mineru-api
       health_path: /openapi.json
+      running_health_timeout_sec: 30
       bootstrap_pip_packages:
         - fastapi
         - uvicorn

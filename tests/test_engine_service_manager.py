@@ -46,6 +46,49 @@ def test_mineru_service_bootstrap_command(monkeypatch) -> None:
     assert "exec mineru-api --host 0.0.0.0 --port 19100" in command[2]
 
 
+def test_running_service_restarts_when_health_check_fails(monkeypatch) -> None:
+    manager = EngineServiceManager()
+    events: list[str] = []
+
+    monkeypatch.setattr(manager, "_docker_container_running", lambda name: True)
+    monkeypatch.setattr(manager, "_docker_container_exists", lambda name: True)
+
+    def fake_wait_for_health(url: str, timeout: int) -> None:
+        events.append(f"health:{url}:{timeout}")
+        if len(events) == 1:
+            raise RuntimeError("health endpoint not ready")
+
+    def fake_restart_container(name: str) -> None:
+        events.append(f"restart:{name}")
+
+    monkeypatch.setattr(manager, "_wait_for_health", fake_wait_for_health)
+    monkeypatch.setattr(manager, "_docker_restart_existing", fake_restart_container)
+
+    service_info = manager.ensure_service(
+        "mineru",
+        {
+            "image": "pdf-agent/mineru-runner:0.1.0",
+            "service": {
+                "type": "mineru_api",
+                "host": "127.0.0.1",
+                "port": 19100,
+                "container_name": "pdf-agent-mineru-api",
+                "health_path": "/openapi.json",
+                "running_health_timeout_sec": 12,
+                "startup_timeout_sec": 600,
+            },
+        },
+        {"name": "pipeline_gpu_auto"},
+    )
+
+    assert service_info["url"] == "http://127.0.0.1:19100"
+    assert events == [
+        "health:http://127.0.0.1:19100/openapi.json:12",
+        "restart:pdf-agent-mineru-api",
+        "health:http://127.0.0.1:19100/openapi.json:600",
+    ]
+
+
 def test_invoke_mineru_parse_uses_fastapi_compatible_multipart(tmp_path, monkeypatch) -> None:
     manager = EngineServiceManager()
     pdf_path = tmp_path / "demo.pdf"

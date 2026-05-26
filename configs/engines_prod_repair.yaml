@@ -10,6 +10,7 @@ engines:
       port: 19103
       container_name: pdf-agent-mineru25-pro-repair
       health_path: /health
+      running_health_timeout_sec: 30
       bootstrap_pip_packages:
         - fastapi
         - uvicorn
