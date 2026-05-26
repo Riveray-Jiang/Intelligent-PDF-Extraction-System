@@ -56,6 +56,9 @@ Prerequisites:
 - Docker Desktop
 - PowerShell on Windows
 
+The commands below are tested on Windows PowerShell. WSL/Linux may work, but is
+not yet the documented product-development path for this repository.
+
 Backend:
 
 ```powershell
