@@ -27,6 +27,7 @@ from .document_artifacts import load_document_ir
 from .document_artifacts import page_model_to_payload
 from .ingestion_agent import IngestionAgent
 from .engine_service_manager import EngineServiceManager
+from .file_history import build_file_history_payload as _build_file_history_payload
 from .markdown_export import page_to_preview_markdown
 from .pdfium_runtime import PDFIUM_LOCK
 from .selection_agent import SelectionAgent
@@ -293,54 +294,13 @@ def resolve_page_preview_output(job: "JobRecord", page_number: int, run_id: str 
 
 
 def build_file_history_payload(job: "JobRecord") -> dict[str, Any]:
-    versions: list[dict[str, Any]] = []
-    for manifest in read_document_job_manifests(job.document_id):
-        version_job_id = str(manifest.get("job_id") or "")
-        if not version_job_id:
-            continue
-        version_job = JOB_STORE.get(version_job_id)
-        if version_job is None:
-            continue
-
-        runs = read_job_run_history(version_job.job_id, limit=None, job=version_job)
-        plan = build_effective_output_plan(version_job)
-        merged_artifact_urls: dict[str, str] = {}
-        latest_output_pages: list[int] = []
-        effective_page_run_ids: dict[int, str | None] = {}
-        if plan is not None:
-            merged_artifact_urls = {
-                "document.md": f"/api/jobs/{version_job.job_id}/merged-artifact/document.md",
-                "document_ir.json": f"/api/jobs/{version_job.job_id}/merged-artifact/document_ir.json",
-            }
-            latest_output_pages = [int(page_number) for page_number in plan["page_numbers"]]
-            effective_page_run_ids = {
-                int(page_number): entry.get("run_id")
-                for page_number, entry in plan["effective_page_runs"].items()
-            }
-
-        versions.append(
-            {
-                "job_id": version_job.job_id,
-                "document_id": version_job.document_id,
-                "file_version": int(version_job.file_version),
-                "replaces_job_id": version_job.replaces_job_id,
-                "filename": version_job.original_filename,
-                "created_at": version_job.created_at,
-                "page_count": int(version_job.ingestion.get("page_count", 0)),
-                "is_current": version_job.job_id == job.job_id,
-                "has_output": bool(merged_artifact_urls),
-                "latest_output_pages": latest_output_pages,
-                "effective_page_run_ids": effective_page_run_ids,
-                "merged_artifact_urls": merged_artifact_urls,
-                "runs": runs,
-            }
-        )
-
-    return {
-        "document_id": job.document_id,
-        "current_job_id": job.job_id,
-        "versions": versions,
-    }
+    return _build_file_history_payload(
+        job,
+        read_document_job_manifests=read_document_job_manifests,
+        get_job=JOB_STORE.get,
+        read_job_run_history=read_job_run_history,
+        build_effective_output_plan=build_effective_output_plan,
+    )
 
 
 @dataclass

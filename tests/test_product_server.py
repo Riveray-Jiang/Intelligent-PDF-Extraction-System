@@ -15,6 +15,7 @@ from backend.product_server import artifact_paths_for_output_dir
 from backend.product_server import build_page_model
 from backend.product_server import build_merged_output
 from backend.product_server import build_merged_output_bundle
+from backend.product_server import build_file_history_payload
 from backend.product_server import build_pipeline_command
 from backend.product_server import compress_page_numbers
 from backend.product_server import compute_duration_sec
@@ -49,6 +50,9 @@ from backend.job_utils import sanitize_filename as sanitize_filename_from_module
 from backend.job_utils import utc_now as utc_now_from_module
 from backend.job_manifests import load_job_manifest as load_job_manifest_from_module
 from backend.job_manifests import read_document_job_manifests as read_document_job_manifests_from_module
+from backend.file_history import (
+    build_file_history_payload as build_file_history_payload_from_module,
+)
 from backend.merged_output import (
     build_merged_output as build_merged_output_from_module,
 )
@@ -482,6 +486,81 @@ def test_merged_output_module_matches_product_server_exports(monkeypatch, tmp_pa
             assert set(module_archive.namelist()) == set(server_archive.namelist())
             for name in module_archive.namelist():
                 assert module_archive.read(name) == server_archive.read(name)
+
+
+def test_file_history_module_matches_product_server_export(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    current_job = _make_job(tmp_path)
+    previous_job = _make_job(tmp_path / "previous")
+    previous_job.job_id = "job_previous"
+    previous_job.file_version = 1
+    previous_job.replaces_job_id = None
+    previous_job.created_at = "2026-05-26T09:00:00Z"
+    current_job.file_version = 2
+    current_job.replaces_job_id = previous_job.job_id
+    current_job.created_at = "2026-05-26T10:00:00Z"
+    jobs_by_id = {
+        current_job.job_id: current_job,
+        previous_job.job_id: previous_job,
+    }
+
+    class FakeJobStore:
+        def get(self, job_id: str) -> JobRecord | None:
+            return jobs_by_id.get(job_id)
+
+    def fake_plan(job: JobRecord) -> dict[str, object] | None:
+        if job is not current_job:
+            return None
+        return {
+            "page_numbers": [1, 3],
+            "effective_page_runs": {
+                1: {"run_id": "run_fast"},
+                3: {"run_id": None},
+            },
+        }
+
+    manifests = [
+        {"job_id": previous_job.job_id},
+        {"job_id": current_job.job_id},
+        {"job_id": "missing_job"},
+    ]
+    monkeypatch.setattr(
+        "backend.product_server.read_document_job_manifests",
+        lambda document_id: manifests,
+    )
+    monkeypatch.setattr("backend.product_server.JOB_STORE", FakeJobStore())
+    monkeypatch.setattr(
+        "backend.product_server.read_job_run_history",
+        lambda job_id, limit=None, job=None: [{"run_id": f"{job_id}_run"}],
+    )
+    monkeypatch.setattr(
+        "backend.product_server.build_effective_output_plan",
+        fake_plan,
+    )
+
+    module_payload = build_file_history_payload_from_module(
+        current_job,
+        read_document_job_manifests=product_server.read_document_job_manifests,
+        get_job=product_server.JOB_STORE.get,
+        read_job_run_history=product_server.read_job_run_history,
+        build_effective_output_plan=product_server.build_effective_output_plan,
+    )
+    server_payload = build_file_history_payload(current_job)
+
+    assert module_payload == server_payload
+    assert module_payload["current_job_id"] == current_job.job_id
+    assert [version["job_id"] for version in module_payload["versions"]] == [
+        previous_job.job_id,
+        current_job.job_id,
+    ]
+    assert module_payload["versions"][1]["has_output"] is True
+    assert module_payload["versions"][1]["latest_output_pages"] == [1, 3]
+    assert module_payload["versions"][1]["effective_page_run_ids"] == {
+        1: "run_fast",
+        3: None,
+    }
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
