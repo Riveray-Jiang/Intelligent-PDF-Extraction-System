@@ -7,6 +7,7 @@ import pytest
 
 import backend.product_server as product_server
 from backend.product_server import JobRecord
+from backend.product_server import JobStore
 from backend.product_server import ARTIFACT_FILENAMES
 from backend.product_server import IMAGE_AGENT_CACHE_VERSION
 from backend.product_server import _looks_like_bad_reliable_override
@@ -53,6 +54,8 @@ from backend.job_manifests import read_document_job_manifests as read_document_j
 from backend.file_history import (
     build_file_history_payload as build_file_history_payload_from_module,
 )
+from backend.job_store import JobRecord as JobRecord_from_module
+from backend.job_store import JobStore as JobStore_from_module
 from backend.merged_output import (
     build_merged_output as build_merged_output_from_module,
 )
@@ -340,6 +343,11 @@ def test_job_utils_module_matches_product_server_exports() -> None:
     server_run_id = make_run_id("reliable")
     assert module_run_id.startswith("run_") and "_reliable_" in module_run_id
     assert server_run_id.startswith("run_") and "_reliable_" in server_run_id
+
+
+def test_job_store_module_matches_product_server_exports() -> None:
+    assert JobRecord_from_module is JobRecord
+    assert JobStore_from_module is JobStore
 
 
 def test_pipeline_command_module_matches_product_server_exports(tmp_path: Path) -> None:
