@@ -43,6 +43,8 @@ from .image_agent_cache import legacy_image_agent_cache_path
 from .image_agent_cache import load_image_agent_cache_record
 from .image_agent_cache import save_image_agent_cache_record
 from .image_agent_preview import extract_image_agent_preview
+from .job_manifests import load_job_manifest as _load_job_manifest
+from .job_manifests import read_document_job_manifests as _read_document_job_manifests
 from .job_utils import compute_duration_sec
 from .job_utils import make_job_id
 from .job_utils import make_run_id
@@ -173,43 +175,11 @@ def read_job_run_history(
 
 
 def load_job_manifest(job_id: str) -> dict[str, Any] | None:
-    manifest_path = DATA_ROOT / job_id / "job_manifest.json"
-    if not manifest_path.exists():
-        return None
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    manifest["job_id"] = str(manifest.get("job_id") or job_id)
-    manifest["document_id"] = str(manifest.get("document_id") or manifest["job_id"])
-    manifest["file_version"] = int(manifest.get("file_version") or 1)
-    manifest["replaces_job_id"] = manifest.get("replaces_job_id")
-    return manifest
+    return _load_job_manifest(job_id, data_root=DATA_ROOT)
 
 
 def read_document_job_manifests(document_id: str) -> list[dict[str, Any]]:
-    if not DATA_ROOT.exists():
-        return []
-
-    manifests: list[dict[str, Any]] = []
-    for job_dir in DATA_ROOT.iterdir():
-        if not job_dir.is_dir():
-            continue
-        manifest = load_job_manifest(job_dir.name)
-        if manifest is None:
-            continue
-        if str(manifest.get("document_id") or manifest.get("job_id")) != document_id:
-            continue
-        manifests.append(manifest)
-
-    manifests.sort(
-        key=lambda item: (
-            int(item.get("file_version") or 1),
-            str(item.get("created_at") or ""),
-        ),
-        reverse=True,
-    )
-    return manifests
+    return _read_document_job_manifests(document_id, data_root=DATA_ROOT)
 
 
 def resolve_history_pages(job: "JobRecord", entry: dict[str, Any]) -> list[int]:

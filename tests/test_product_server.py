@@ -21,10 +21,12 @@ from backend.product_server import ensure_run_allowed
 from backend.product_server import format_merged_page_markdown
 from backend.product_server import load_image_agent_cache_record
 from backend.product_server import load_document_ir
+from backend.product_server import load_job_manifest
 from backend.product_server import make_job_id
 from backend.product_server import make_run_id
 from backend.product_server import page_model_to_payload
 from backend.product_server import parse_utc
+from backend.product_server import read_document_job_manifests
 from backend.product_server import read_run_insights
 from backend.product_server import resolve_page_preview_output
 from backend.product_server import sanitize_filename
@@ -41,6 +43,8 @@ from backend.job_utils import make_run_id as make_run_id_from_module
 from backend.job_utils import parse_utc as parse_utc_from_module
 from backend.job_utils import sanitize_filename as sanitize_filename_from_module
 from backend.job_utils import utc_now as utc_now_from_module
+from backend.job_manifests import load_job_manifest as load_job_manifest_from_module
+from backend.job_manifests import read_document_job_manifests as read_document_job_manifests_from_module
 from backend.pipeline_command import build_pipeline_command as build_pipeline_command_from_module
 from backend.pipeline_command import default_selection_mode as default_selection_mode_from_module
 from backend.run_insights import read_run_insights as read_run_insights_from_module
@@ -364,6 +368,43 @@ def test_run_insights_module_matches_product_server_export(monkeypatch, tmp_path
     )
 
     assert read_run_insights_from_module(job) == read_run_insights(job)
+
+
+def test_job_manifests_module_matches_product_server_exports(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "jobs"
+    monkeypatch.setattr("backend.product_server.DATA_ROOT", data_root)
+    (data_root / "job_v1").mkdir(parents=True)
+    (data_root / "job_v2").mkdir(parents=True)
+    (data_root / "other").mkdir(parents=True)
+    (data_root / "job_v1" / "job_manifest.json").write_text(
+        json.dumps(
+            {
+                "job_id": "job_v1",
+                "document_id": "doc_demo",
+                "file_version": 1,
+                "created_at": "2026-05-26T10:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (data_root / "job_v2" / "job_manifest.json").write_text(
+        json.dumps(
+            {
+                "job_id": "job_v2",
+                "document_id": "doc_demo",
+                "file_version": 2,
+                "created_at": "2026-05-26T11:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (data_root / "other" / "job_manifest.json").write_text(
+        json.dumps({"job_id": "other", "document_id": "other_doc", "file_version": 1}),
+        encoding="utf-8",
+    )
+
+    assert load_job_manifest_from_module("job_v1", data_root=data_root) == load_job_manifest("job_v1")
+    assert read_document_job_manifests_from_module("doc_demo", data_root=data_root) == read_document_job_manifests("doc_demo")
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
