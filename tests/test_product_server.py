@@ -14,18 +14,30 @@ from backend.product_server import artifact_paths_for_output_dir
 from backend.product_server import build_page_model
 from backend.product_server import build_merged_output
 from backend.product_server import build_merged_output_bundle
+from backend.product_server import compute_duration_sec
 from backend.product_server import ensure_run_allowed
 from backend.product_server import format_merged_page_markdown
 from backend.product_server import load_image_agent_cache_record
 from backend.product_server import load_document_ir
+from backend.product_server import make_job_id
+from backend.product_server import make_run_id
 from backend.product_server import page_model_to_payload
+from backend.product_server import parse_utc
 from backend.product_server import resolve_page_preview_output
+from backend.product_server import sanitize_filename
+from backend.product_server import utc_now
 from backend.document_artifacts import ARTIFACT_FILENAMES as DOCUMENT_ARTIFACT_FILENAMES
 from backend.document_artifacts import artifact_paths_for_output_dir as artifact_paths_for_output_dir_from_module
 from backend.document_artifacts import build_page_model as build_page_model_from_module
 from backend.document_artifacts import format_merged_page_markdown as format_merged_page_markdown_from_module
 from backend.document_artifacts import load_document_ir as load_document_ir_from_module
 from backend.document_artifacts import page_model_to_payload as page_model_to_payload_from_module
+from backend.job_utils import compute_duration_sec as compute_duration_sec_from_module
+from backend.job_utils import make_job_id as make_job_id_from_module
+from backend.job_utils import make_run_id as make_run_id_from_module
+from backend.job_utils import parse_utc as parse_utc_from_module
+from backend.job_utils import sanitize_filename as sanitize_filename_from_module
+from backend.job_utils import utc_now as utc_now_from_module
 from backend.image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_MODULE_VERSION
 from backend.image_agent_cache import load_image_agent_cache_record as load_image_agent_cache_record_from_module
 from backend.image_agent_preview import extract_image_agent_preview as extract_image_agent_preview_from_module
@@ -276,6 +288,30 @@ def test_document_artifact_module_matches_product_server_exports(tmp_path: Path)
     assert page_from_module == page_from_server
     assert page_model_to_payload_from_module(page_from_module) == page_model_to_payload(page_from_server)
     assert format_merged_page_markdown_from_module(2, "") == format_merged_page_markdown(2, "")
+
+
+def test_job_utils_module_matches_product_server_exports() -> None:
+    started_at = "2026-05-26T10:00:00Z"
+    finished_at = "2026-05-26T10:00:02.500000Z"
+
+    assert compute_duration_sec_from_module(started_at, finished_at) == compute_duration_sec(started_at, finished_at) == 2.5
+    assert parse_utc_from_module("not-a-date") == parse_utc("not-a-date") is None
+    assert sanitize_filename_from_module(" report v1/final?.pdf ") == sanitize_filename(" report v1/final?.pdf ") == "report_v1final.pdf"
+
+    module_now = utc_now_from_module()
+    server_now = utc_now()
+    assert module_now.endswith("Z")
+    assert server_now.endswith("Z")
+
+    module_job_id = make_job_id_from_module()
+    server_job_id = make_job_id()
+    assert module_job_id.startswith("job_")
+    assert server_job_id.startswith("job_")
+
+    module_run_id = make_run_id_from_module("reliable")
+    server_run_id = make_run_id("reliable")
+    assert module_run_id.startswith("run_") and "_reliable_" in module_run_id
+    assert server_run_id.startswith("run_") and "_reliable_" in server_run_id
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:

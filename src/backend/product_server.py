@@ -13,8 +13,6 @@ import threading
 import time
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime
-from datetime import timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -23,7 +21,6 @@ from typing import Any
 from urllib.parse import quote
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
-from uuid import uuid4
 
 from .document_artifacts import ARTIFACT_FILENAMES
 from .document_artifacts import artifact_paths_for_output_dir
@@ -47,6 +44,12 @@ from .image_agent_cache import legacy_image_agent_cache_path
 from .image_agent_cache import load_image_agent_cache_record
 from .image_agent_cache import save_image_agent_cache_record
 from .image_agent_preview import extract_image_agent_preview
+from .job_utils import compute_duration_sec
+from .job_utils import make_job_id
+from .job_utils import make_run_id
+from .job_utils import parse_utc
+from .job_utils import sanitize_filename
+from .job_utils import utc_now
 from .local_image_fallback import apply_local_image_fallback
 from .multipart_form import parse_multipart_form_data as _parse_multipart_form_data
 
@@ -102,27 +105,6 @@ def build_pipeline_command(
     if selection:
         command.extend(["--selection", selection])
     return command
-
-
-def utc_now() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
-def parse_utc(timestamp: str | None) -> datetime | None:
-    if not timestamp:
-        return None
-    try:
-        return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
-        return None
-
-
-def compute_duration_sec(started_at: str | None, finished_at: str | None) -> float | None:
-    started = parse_utc(started_at)
-    finished = parse_utc(finished_at)
-    if started and finished:
-        return round((finished - started).total_seconds(), 2)
-    return None
 
 
 def append_run_history(job: "JobRecord") -> None:
@@ -723,15 +705,6 @@ def build_file_history_payload(job: "JobRecord") -> dict[str, Any]:
     }
 
 
-def make_job_id() -> str:
-    return f"job_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
-
-
-def make_run_id(run_mode: str) -> str:
-    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    return f"run_{stamp}_{run_mode}_{uuid4().hex[:6]}"
-
-
 def read_run_insights(job: "JobRecord") -> dict[str, Any]:
     pipeline_state = job.artifact_paths()["pipeline_state.json"]
     validation_report = job.artifact_paths()["validation_report.json"]
@@ -768,12 +741,6 @@ def read_run_insights(job: "JobRecord") -> dict[str, Any]:
         "failed_pages_count": failed_pages_count,
         "image_agent": image_agent,
     }
-
-
-def sanitize_filename(name: str) -> str:
-    cleaned = "".join(ch for ch in name if ch.isalnum() or ch in ("-", "_", ".", " ")).strip()
-    cleaned = cleaned.replace(" ", "_")
-    return cleaned or "input.pdf"
 
 
 @dataclass
