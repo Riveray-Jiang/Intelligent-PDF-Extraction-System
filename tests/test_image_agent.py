@@ -1,11 +1,11 @@
-from backend.types import Block
+﻿from backend.types import Block
 from backend.types import DocumentIR
 from backend.types import Page
-from backend.visual_agent import VisualAgent
-from backend.visual_agent import VISUAL_AGENT_KIND_MAP
-from backend.visual_agent import VISUAL_AGENT_KIND_WORKFLOW
-from backend.visual_agent import VisualInterpretationPayload
-from backend.visual_agent import page_has_visual_content
+from backend.image_agent import ImageAgent
+from backend.image_agent import IMAGE_AGENT_KIND_MAP
+from backend.image_agent import IMAGE_AGENT_KIND_WORKFLOW
+from backend.image_agent import ImageInterpretationPayload
+from backend.image_agent import page_has_image_content
 
 
 class _FakePdfDocument:
@@ -16,7 +16,7 @@ class _FakePdfDocument:
         return None
 
 
-def test_page_has_visual_content_detects_visual_blocks() -> None:
+def test_page_has_image_content_detects_image_blocks() -> None:
     page = Page(
         page_index=0,
         blocks=[
@@ -25,11 +25,11 @@ def test_page_has_visual_content_detects_visual_blocks() -> None:
         ],
     )
 
-    assert page_has_visual_content(page) is True
+    assert page_has_image_content(page) is True
 
 
-def test_visual_agent_enriches_visual_pages(monkeypatch, tmp_path) -> None:
-    agent = VisualAgent(api_key="test-key")
+def test_image_agent_enriches_image_pages(monkeypatch, tmp_path) -> None:
+    agent = ImageAgent(api_key="test-key")
     document = DocumentIR(
         doc_id="demo",
         source_file="demo.pdf",
@@ -46,13 +46,13 @@ def test_visual_agent_enriches_visual_pages(monkeypatch, tmp_path) -> None:
         ],
     )
 
-    monkeypatch.setattr("backend.visual_agent.pdfium.PdfDocument", lambda path: _FakePdfDocument())
+    monkeypatch.setattr("backend.image_agent.pdfium.PdfDocument", lambda path: _FakePdfDocument())
     monkeypatch.setattr(agent, "_render_page_data_url", lambda pdf_doc, page_index: "data:image/jpeg;base64,abc")
     monkeypatch.setattr(
         agent,
-        "_request_visual_interpretation",
-        lambda image_data_url, page: VisualInterpretationPayload(
-            has_meaningful_visual=True,
+        "_request_image_interpretation",
+        lambda image_data_url, page: ImageInterpretationPayload(
+            has_meaningful_image=True,
             summary="This diagram shows a linear review process.",
             key_elements=["Input", "Validation", "Approval"],
             relationships_or_flow=["Input flows to validation, then approval."],
@@ -63,15 +63,15 @@ def test_visual_agent_enriches_visual_pages(monkeypatch, tmp_path) -> None:
     enriched, stats = agent.enrich_document(document, pdf_path=tmp_path / "demo.pdf")
 
     assert stats["enabled"] is True
-    assert stats["visual_pages_detected"] == 1
-    assert stats["visual_pages_enriched"] == 1
-    visual_blocks = [block for block in enriched.pages[0].blocks if block.type == "visual_interpretation"]
-    assert len(visual_blocks) == 1
-    assert "linear review process" in visual_blocks[0].text
+    assert stats["image_pages_detected"] == 1
+    assert stats["image_pages_enriched"] == 1
+    image_blocks = [block for block in enriched.pages[0].blocks if block.type == "image_interpretation"]
+    assert len(image_blocks) == 1
+    assert "linear review process" in image_blocks[0].text
 
 
-def test_visual_agent_skips_enrichment_without_key(tmp_path) -> None:
-    agent = VisualAgent(api_key="")
+def test_image_agent_skips_enrichment_without_key(tmp_path) -> None:
+    agent = ImageAgent(api_key="")
     document = DocumentIR(
         doc_id="demo",
         source_file="demo.pdf",
@@ -88,13 +88,13 @@ def test_visual_agent_skips_enrichment_without_key(tmp_path) -> None:
     enriched, stats = agent.enrich_document(document, pdf_path=tmp_path / "demo.pdf")
 
     assert stats["enabled"] is False
-    assert stats["visual_pages_detected"] == 1
-    assert stats["visual_pages_enriched"] == 0
-    assert all(block.type != "visual_interpretation" for block in enriched.pages[0].blocks)
+    assert stats["image_pages_detected"] == 1
+    assert stats["image_pages_enriched"] == 0
+    assert all(block.type != "image_interpretation" for block in enriched.pages[0].blocks)
 
 
-def test_visual_agent_generates_single_page_record(monkeypatch, tmp_path) -> None:
-    agent = VisualAgent(api_key="test-key")
+def test_image_agent_generates_single_page_record(monkeypatch, tmp_path) -> None:
+    agent = ImageAgent(api_key="test-key")
     page = Page(
         page_index=0,
         blocks=[
@@ -103,13 +103,13 @@ def test_visual_agent_generates_single_page_record(monkeypatch, tmp_path) -> Non
         ],
     )
 
-    monkeypatch.setattr("backend.visual_agent.pdfium.PdfDocument", lambda path: _FakePdfDocument())
+    monkeypatch.setattr("backend.image_agent.pdfium.PdfDocument", lambda path: _FakePdfDocument())
     monkeypatch.setattr(agent, "_render_page_data_url", lambda pdf_doc, page_index: "data:image/jpeg;base64,abc")
     monkeypatch.setattr(
         agent,
-        "_request_visual_interpretation",
-        lambda image_data_url, current_page: VisualInterpretationPayload(
-            has_meaningful_visual=True,
+        "_request_image_interpretation",
+        lambda image_data_url, current_page: ImageInterpretationPayload(
+            has_meaningful_image=True,
             summary="This diagram shows a linear review process.",
             key_elements=["Input", "Validation", "Approval"],
             relationships_or_flow=["Input flows to validation, then approval."],
@@ -119,28 +119,28 @@ def test_visual_agent_generates_single_page_record(monkeypatch, tmp_path) -> Non
 
     record, stats = agent.generate_page_record(page, pdf_path=tmp_path / "demo.pdf")
 
-    assert stats["visual_pages_detected"] == 1
-    assert stats["visual_pages_enriched"] == 1
+    assert stats["image_pages_detected"] == 1
+    assert stats["image_pages_enriched"] == 1
     assert record["generated"] is True
-    assert record["has_meaningful_visual"] is True
+    assert record["has_meaningful_image"] is True
     assert "linear review process" in str(record["summary"])
     assert "Key elements:" in str(record["markdown"])
 
 
-def test_visual_agent_generates_empty_record_when_nothing_meaningful(monkeypatch, tmp_path) -> None:
-    agent = VisualAgent(api_key="test-key")
+def test_image_agent_generates_empty_record_when_nothing_meaningful(monkeypatch, tmp_path) -> None:
+    agent = ImageAgent(api_key="test-key")
     page = Page(
         page_index=0,
         blocks=[Block(id="b1", type="figure", text="", page_index=0, order=0)],
     )
 
-    monkeypatch.setattr("backend.visual_agent.pdfium.PdfDocument", lambda path: _FakePdfDocument())
+    monkeypatch.setattr("backend.image_agent.pdfium.PdfDocument", lambda path: _FakePdfDocument())
     monkeypatch.setattr(agent, "_render_page_data_url", lambda pdf_doc, page_index: "data:image/jpeg;base64,abc")
     monkeypatch.setattr(
         agent,
-        "_request_visual_interpretation",
-        lambda image_data_url, current_page: VisualInterpretationPayload(
-            has_meaningful_visual=False,
+        "_request_image_interpretation",
+        lambda image_data_url, current_page: ImageInterpretationPayload(
+            has_meaningful_image=False,
             summary="",
             key_elements=[],
             relationships_or_flow=[],
@@ -150,16 +150,16 @@ def test_visual_agent_generates_empty_record_when_nothing_meaningful(monkeypatch
 
     record, stats = agent.generate_page_record(page, pdf_path=tmp_path / "demo.pdf")
 
-    assert stats["visual_pages_detected"] == 1
-    assert stats["visual_pages_enriched"] == 0
+    assert stats["image_pages_detected"] == 1
+    assert stats["image_pages_enriched"] == 0
     assert record["generated"] is True
-    assert record["has_meaningful_visual"] is False
+    assert record["has_meaningful_image"] is False
     assert record["summary"] is None
     assert record["markdown"] is None
 
 
-def test_visual_agent_infers_chinese_map_context() -> None:
-    agent = VisualAgent(api_key="test-key")
+def test_image_agent_infers_chinese_map_context() -> None:
+    agent = ImageAgent(api_key="test-key")
     page = Page(
         page_index=6,
         blocks=[
@@ -175,21 +175,76 @@ def test_visual_agent_infers_chinese_map_context() -> None:
     )
 
     assert agent._infer_output_language(page) == "zh"
-    assert agent._infer_visual_kind(page) == "map"
+    assert agent._infer_image_kind(page) == "map"
 
     prompt = agent._build_prompt(page)
 
     assert "Page language: Simplified Chinese." in prompt
-    assert "Likely visual type: map." in prompt
+    assert "entirely in Simplified Chinese" in prompt
+    assert "Likely image type: map." in prompt
     assert "Output format rules are strict:" in prompt
     assert "summary: exactly 1 short sentence." in prompt
     assert "Empty arrays are preferred over repetitive filler." in prompt
+    assert "Photos, site photos, factory photos" in prompt
+    assert "Return has_meaningful_image=false only for blank" in prompt
 
 
-def test_visual_agent_formats_markdown_with_localized_headings() -> None:
-    agent = VisualAgent(api_key="test-key")
-    payload = VisualInterpretationPayload(
-        has_meaningful_visual=True,
+def test_image_agent_prefers_page_language_over_english_filename() -> None:
+    agent = ImageAgent(api_key="test-key")
+    page = Page(
+        page_index=0,
+        blocks=[
+            Block(
+                id="b1",
+                type="text",
+                text="本项目总平面布置图展示了厂区道路、仓库、办公区和生产区域的位置关系。",
+                page_index=0,
+                order=0,
+            )
+        ],
+    )
+
+    assert agent._infer_output_language(page, source_name="Permit_1912.2003.pdf") == "zh"
+
+
+def test_image_agent_retries_empty_reading_for_image_pages() -> None:
+    agent = ImageAgent(api_key="test-key")
+    page = Page(
+        page_index=0,
+        blocks=[
+            Block(id="b1", type="figure", text="", page_index=0, order=0),
+            Block(id="b2", type="image_caption", text="Factory site photo", page_index=0, order=1),
+        ],
+    )
+
+    assert agent._should_retry_empty_image_reading(page) is True
+
+
+def test_image_agent_detects_mixed_language_payload() -> None:
+    agent = ImageAgent(api_key="test-key")
+    mixed_payload = ImageInterpretationPayload(
+        has_meaningful_image=True,
+        summary="This map shows the project layout and warehouse areas.",
+        key_elements=["钽铌精矿仓库", "14#原矿仓库", "行政及人员生活区"],
+        relationships_or_flow=["仓库位于厂区北侧。"],
+        notes_or_uncertainty=[],
+    )
+    chinese_payload = ImageInterpretationPayload(
+        has_meaningful_image=True,
+        summary="该图展示了项目厂区总平面布置及仓库、办公区的位置关系。",
+        key_elements=["钽铌精矿仓库", "14#原矿仓库", "行政及人员生活区"],
+        relationships_or_flow=["仓库位于厂区北侧。"],
+        notes_or_uncertainty=[],
+    )
+
+    assert agent._payload_matches_language(mixed_payload, "zh") is False
+    assert agent._payload_matches_language(chinese_payload, "zh") is True
+
+
+def test_image_agent_formats_markdown_with_localized_headings() -> None:
+    agent = ImageAgent(api_key="test-key")
+    payload = ImageInterpretationPayload(
+        has_meaningful_image=True,
         summary="该图主要说明项目位置与周边生态管控区域的空间关系。",
         key_elements=["新余市渝水区", "生态保护红线"],
         relationships_or_flow=["项目位置位于生态空间分区图的标注位置。"],
@@ -199,7 +254,7 @@ def test_visual_agent_formats_markdown_with_localized_headings() -> None:
     markdown = agent._format_interpretation_markdown(
         payload,
         language="zh",
-        visual_kind=VISUAL_AGENT_KIND_WORKFLOW,
+        image_kind=IMAGE_AGENT_KIND_WORKFLOW,
     )
 
     assert "关键内容：" in markdown
@@ -207,8 +262,8 @@ def test_visual_agent_formats_markdown_with_localized_headings() -> None:
     assert "说明：" in markdown
 
 
-def test_visual_agent_inserts_interpretation_after_visual_block_not_page_end() -> None:
-    agent = VisualAgent(api_key="test-key")
+def test_image_agent_inserts_interpretation_after_image_block_not_page_end() -> None:
+    agent = ImageAgent(api_key="test-key")
     page = Page(
         page_index=4,
         blocks=[
@@ -219,24 +274,24 @@ def test_visual_agent_inserts_interpretation_after_visual_block_not_page_end() -
         ],
     )
 
-    payload = VisualInterpretationPayload(
-        has_meaningful_visual=True,
+    payload = ImageInterpretationPayload(
+        has_meaningful_image=True,
         summary="This chart shows a trend.",
         key_elements=[],
         relationships_or_flow=[],
         notes_or_uncertainty=[],
     )
 
-    updated = agent._append_visual_agent_block(page, payload)
+    updated = agent._append_image_agent_block(page, payload)
     ordered_types = [block.type for block in sorted(updated.blocks, key=lambda block: block.order or 0)]
 
-    assert ordered_types == ["table", "text", "image", "visual_interpretation", "table"]
+    assert ordered_types == ["table", "text", "image", "image_interpretation", "table"]
 
 
-def test_visual_agent_formatter_drops_redundant_sections() -> None:
-    agent = VisualAgent(api_key="test-key")
-    payload = VisualInterpretationPayload(
-        has_meaningful_visual=True,
+def test_image_agent_formatter_drops_redundant_sections() -> None:
+    agent = ImageAgent(api_key="test-key")
+    payload = ImageInterpretationPayload(
+        has_meaningful_image=True,
         summary="The map shows the project site within the regulated zone.",
         key_elements=["project site", "regulated zone", "project site"],
         relationships_or_flow=[
@@ -250,7 +305,7 @@ def test_visual_agent_formatter_drops_redundant_sections() -> None:
     markdown = agent._format_interpretation_markdown(
         payload,
         language="en",
-        visual_kind=VISUAL_AGENT_KIND_MAP,
+        image_kind=IMAGE_AGENT_KIND_MAP,
     )
 
     assert markdown.count("The map shows the project site within the regulated zone.") == 1

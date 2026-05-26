@@ -20,7 +20,7 @@ def test_document_ir_to_markdown_renders_page_sections_and_tables() -> None:
                     Block(id="b3", type="table", text="<table><tr><td>A</td></tr></table>", page_index=0, order=2),
                     Block(
                         id="b4",
-                        type="visual_interpretation",
+                        type="image_interpretation",
                         text="This flowchart shows a three-step approval process.",
                         page_index=0,
                         order=3,
@@ -37,11 +37,11 @@ def test_document_ir_to_markdown_renders_page_sections_and_tables() -> None:
     assert "### Overview" in markdown
     assert "First paragraph." in markdown
     assert "<table><tr><td>A</td></tr></table>" in markdown
-    assert "> **Visual Agent interpretation**" in markdown
+    assert "> **Image Agent interpretation**" in markdown
     assert "three-step approval process" in markdown
 
 
-def test_document_ir_to_markdown_localizes_visual_agent_labels_for_chinese_pages() -> None:
+def test_document_ir_to_markdown_localizes_image_agent_labels_for_chinese_pages() -> None:
     document = DocumentIR(
         doc_id="demo",
         source_file="demo.pdf",
@@ -53,11 +53,11 @@ def test_document_ir_to_markdown_localizes_visual_agent_labels_for_chinese_pages
                 blocks=[
                     Block(
                         id="b1",
-                        type="visual_interpretation",
+                        type="image_interpretation",
                         text="该图主要说明项目位置与周边生态保护区域的空间关系。",
                         page_index=0,
                         order=0,
-                        source={"agent": "visual-agent", "language": "zh"},
+                        source={"agent": "image-agent", "language": "zh"},
                     ),
                 ],
             )
@@ -66,7 +66,7 @@ def test_document_ir_to_markdown_localizes_visual_agent_labels_for_chinese_pages
 
     markdown = document_ir_to_markdown(document)
 
-    assert "> **Visual Agent 解读**" in markdown
+    assert "> **Image Agent 解读**" in markdown
     assert "空间关系" in markdown
 
 
@@ -253,15 +253,15 @@ def test_document_ir_to_markdown_keeps_regular_prose_as_paragraphs() -> None:
     assert "significant attention in recent years  \nas a new type of lithium deposit" not in markdown
 
 
-def test_page_preview_markdown_hides_visual_agent_block() -> None:
+def test_page_preview_markdown_hides_image_agent_block() -> None:
     page = Page(
         page_index=0,
         blocks=[
             Block(id="b1", type="figure", text="", page_index=0, order=0, source={"raw": {"image_caption": ["Fig. 1"]}}),
             Block(
                 id="b2",
-                type="visual_interpretation",
-                text="**Visual Agent interpretation**\n\nThis figure highlights the process flow.",
+                type="image_interpretation",
+                text="**Image Agent interpretation**\n\nThis figure highlights the process flow.",
                 page_index=0,
                 order=1,
             ),
@@ -271,11 +271,11 @@ def test_page_preview_markdown_hides_visual_agent_block() -> None:
 
     markdown = page_to_preview_markdown(page)
 
-    assert "Visual Agent interpretation" not in markdown
+    assert "Image Agent interpretation" not in markdown
     assert "Body paragraph." in markdown
 
 
-def test_page_preview_markdown_uses_local_visual_fallback_text_before_placeholder() -> None:
+def test_page_preview_markdown_uses_local_image_fallback_text_before_placeholder() -> None:
     page = Page(
         page_index=0,
         blocks=[
@@ -293,4 +293,27 @@ def test_page_preview_markdown_uses_local_visual_fallback_text_before_placeholde
     markdown = page_to_preview_markdown(page)
 
     assert "Recovered text from stamped region" in markdown
-    assert "[Visual content present]" not in markdown
+    assert "[Image content present]" not in markdown
+
+
+def test_page_preview_markdown_keeps_empty_table_shell_visible() -> None:
+    page = Page(
+        page_index=0,
+        width=1000,
+        height=1400,
+        blocks=[
+            Block(
+                id="b1",
+                type="table",
+                text="",
+                bbox=[100, 20, 900, 240],
+                page_index=0,
+                order=0,
+                source={"raw": {"bbox": [100, 20, 900, 240]}},
+            ),
+        ],
+    )
+
+    markdown = page_to_preview_markdown(page)
+
+    assert "[Table detected]" in markdown

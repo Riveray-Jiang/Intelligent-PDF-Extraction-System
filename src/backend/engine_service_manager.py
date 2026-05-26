@@ -399,6 +399,56 @@ class EngineServiceManager:
         response.raise_for_status()
         return response.json()
 
+    def _ensure_mineru_prewarm_pdf(self) -> Path:
+        prewarm_path = self.project_root / ".runtime_cache" / "prewarm" / "mineru_prewarm.pdf"
+        if prewarm_path.exists() and prewarm_path.stat().st_size > 0:
+            return prewarm_path
+
+        prewarm_path.parent.mkdir(parents=True, exist_ok=True)
+        content = b"BT /F1 12 Tf 72 720 Td (warmup) Tj ET"
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+            b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ]
+
+        pdf = bytearray(b"%PDF-1.4\n")
+        offsets = [0]
+        for index, body in enumerate(objects, start=1):
+            offsets.append(len(pdf))
+            pdf.extend(f"{index} 0 obj\n".encode("ascii"))
+            pdf.extend(body)
+            pdf.extend(b"\nendobj\n")
+
+        xref_offset = len(pdf)
+        pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+        pdf.extend(b"0000000000 65535 f \n")
+        for offset in offsets[1:]:
+            pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+        pdf.extend(
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+        )
+        prewarm_path.write_bytes(bytes(pdf))
+        return prewarm_path
+
+    def _prewarm_mineru_api(self, base_url: str, profile: dict[str, Any]) -> None:
+        self.invoke_mineru_parse(
+            base_url=base_url,
+            pdf_path=self._ensure_mineru_prewarm_pdf(),
+            backend=str(profile.get("backend", "pipeline")),
+            parse_method=str(profile.get("method", "auto")),
+            lang_list=[str(profile.get("lang", "ch"))],
+            formula_enable=bool(profile.get("formula", True)),
+            table_enable=bool(profile.get("table", True)),
+            start_page_id=0,
+            end_page_id=0,
+            timeout_sec=int(profile.get("prewarm_timeout_sec", 300) or 300),
+        )
+
     def prewarm_from_config(self, config_path: str | Path, engine_names: list[str] | None = None) -> list[str]:
         engines = self._load_engine_config(config_path)
         allowed = {name.strip().lower() for name in (engine_names or []) if str(name).strip()}
@@ -414,5 +464,7 @@ class EngineServiceManager:
             if not isinstance(profiles, list) or not profiles:
                 continue
             service_info = self.ensure_service(str(engine_name), engine_cfg, profiles[0])
+            if str(service_info.get("service_type", "")).strip().lower() == "mineru_api":
+                self._prewarm_mineru_api(str(service_info["url"]), profiles[0])
             warmed.append(f"{engine_name}:{service_info['url']}")
         return warmed

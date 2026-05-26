@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import inspect
@@ -18,29 +18,29 @@ from .types import Block
 from .types import DocumentIR
 from .types import Page
 
-VISUAL_BLOCK_TYPES = {
+IMAGE_BLOCK_TYPES = {
     "image",
     "figure",
     "figure_title",
     "image_body",
     "image_caption",
 }
-VISUAL_AGENT_BLOCK_TYPE = "visual_interpretation"
-VISUAL_AGENT_LANGUAGE_ZH = "zh"
-VISUAL_AGENT_LANGUAGE_EN = "en"
-VISUAL_AGENT_KIND_MAP = "map"
-VISUAL_AGENT_KIND_WORKFLOW = "workflow"
-VISUAL_AGENT_KIND_TABLE = "table"
-VISUAL_AGENT_KIND_DIAGRAM = "diagram"
-VISUAL_AGENT_PROMPT_VERSION = "visual-agent-v2-flow-walkthrough"
+IMAGE_AGENT_BLOCK_TYPE = "image_interpretation"
+IMAGE_AGENT_LANGUAGE_ZH = "zh"
+IMAGE_AGENT_LANGUAGE_EN = "en"
+IMAGE_AGENT_KIND_MAP = "map"
+IMAGE_AGENT_KIND_WORKFLOW = "workflow"
+IMAGE_AGENT_KIND_TABLE = "table"
+IMAGE_AGENT_KIND_DIAGRAM = "diagram"
+IMAGE_AGENT_PROMPT_VERSION = "image-agent-v4-progressive-image-reading"
 
 _LOCALIZED_COPY = {
-    VISUAL_AGENT_LANGUAGE_ZH: {
+    IMAGE_AGENT_LANGUAGE_ZH: {
         "key_elements": "关键内容：",
         "relationships": "关系/流程：",
         "notes": "说明：",
     },
-    VISUAL_AGENT_LANGUAGE_EN: {
+    IMAGE_AGENT_LANGUAGE_EN: {
         "key_elements": "Key elements:",
         "relationships": "Flow or relationships:",
         "notes": "Notes:",
@@ -73,24 +73,24 @@ def _load_repo_env_file() -> None:
 _load_repo_env_file()
 
 
-def block_type_has_visual_content(block_type: str) -> bool:
-    return block_type.strip().lower() in VISUAL_BLOCK_TYPES
+def block_type_has_image_content(block_type: str) -> bool:
+    return block_type.strip().lower() in IMAGE_BLOCK_TYPES
 
 
-def page_has_visual_content(page: Page) -> bool:
-    return any(block_type_has_visual_content(block.type) for block in page.blocks)
+def page_has_image_content(page: Page) -> bool:
+    return any(block_type_has_image_content(block.type) for block in page.blocks)
 
 
-class VisualInterpretationPayload(BaseModel):
-    has_meaningful_visual: bool = False
+class ImageInterpretationPayload(BaseModel):
+    has_meaningful_image: bool = False
     summary: str = ""
     key_elements: list[str] = Field(default_factory=list)
     relationships_or_flow: list[str] = Field(default_factory=list)
     notes_or_uncertainty: list[str] = Field(default_factory=list)
 
 
-class VisualAgent:
-    """Use a vision-capable model to enrich visual-heavy pages."""
+class ImageAgent:
+    """Use a vision-capable model to enrich image-heavy pages."""
 
     endpoint = "https://api.openai.com/v1/responses"
 
@@ -114,11 +114,11 @@ class VisualAgent:
     def capability_snapshot(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
-            "name": "Visual Agent",
+            "name": "Image Agent",
             "model": self.model if self.enabled else None,
-            "visual_pages_detected": 0,
-            "visual_pages_enriched": 0,
-            "visual_pages_failed": 0,
+            "image_pages_detected": 0,
+            "image_pages_enriched": 0,
+            "image_pages_failed": 0,
         }
 
     def enrich_document(
@@ -143,12 +143,12 @@ class VisualAgent:
                     pages_out.append(page)
                     continue
 
-                cleaned_page = self._strip_visual_agent_blocks(page)
-                if not page_has_visual_content(cleaned_page):
+                cleaned_page = self._strip_image_agent_blocks(page)
+                if not page_has_image_content(cleaned_page):
                     pages_out.append(cleaned_page)
                     continue
 
-                stats["visual_pages_detected"] = int(stats["visual_pages_detected"]) + 1
+                stats["image_pages_detected"] = int(stats["image_pages_detected"]) + 1
                 if not self.enabled:
                     pages_out.append(cleaned_page)
                     continue
@@ -158,20 +158,20 @@ class VisualAgent:
                         if pdf_doc is None:
                             pdf_doc = pdfium.PdfDocument(str(source_pdf))
                         image_data_url = self._render_page_data_url(pdf_doc, cleaned_page.page_index)
-                    interpretation = self._request_visual_interpretation_for_page(
+                    interpretation = self._request_image_interpretation_for_page(
                         image_data_url,
                         cleaned_page,
                         source_name=source_name,
                     )
-                    if interpretation.has_meaningful_visual:
-                        cleaned_page = self._append_visual_agent_block(
+                    if interpretation.has_meaningful_image:
+                        cleaned_page = self._append_image_agent_block(
                             cleaned_page,
                             interpretation,
                             source_name=source_name,
                         )
-                        stats["visual_pages_enriched"] = int(stats["visual_pages_enriched"]) + 1
+                        stats["image_pages_enriched"] = int(stats["image_pages_enriched"]) + 1
                 except Exception:
-                    stats["visual_pages_failed"] = int(stats["visual_pages_failed"]) + 1
+                    stats["image_pages_failed"] = int(stats["image_pages_failed"]) + 1
                 pages_out.append(cleaned_page)
         finally:
             if pdf_doc is not None:
@@ -189,28 +189,29 @@ class VisualAgent:
         *,
         pdf_path: str | Path,
         source_name: str | None = None,
+        force: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         stats = self.capability_snapshot()
-        cleaned_page = self._strip_visual_agent_blocks(page)
+        cleaned_page = self._strip_image_agent_blocks(page)
         source_filename = source_name or Path(pdf_path).name
         language = self._infer_output_language(cleaned_page, source_name=source_filename)
-        visual_kind = self._infer_visual_kind(cleaned_page)
+        image_kind = self._infer_image_kind(cleaned_page)
         record: dict[str, Any] = {
             "generated": True,
-            "has_meaningful_visual": False,
+            "has_meaningful_image": False,
             "summary": None,
             "markdown": None,
             "language": language,
-            "visual_kind": visual_kind,
+            "image_kind": image_kind,
             "model": self.model if self.enabled else None,
-            "prompt_version": VISUAL_AGENT_PROMPT_VERSION,
+            "prompt_version": IMAGE_AGENT_PROMPT_VERSION,
         }
 
-        if not page_has_visual_content(cleaned_page):
+        if not force and not page_has_image_content(cleaned_page):
             record["generated"] = False
             return record, stats
 
-        stats["visual_pages_detected"] = 1
+        stats["image_pages_detected"] = 1
         if not self.enabled:
             record["generated"] = False
             return record, stats
@@ -220,28 +221,28 @@ class VisualAgent:
             with PDFIUM_LOCK:
                 pdf_doc = pdfium.PdfDocument(str(Path(pdf_path).resolve()))
                 image_data_url = self._render_page_data_url(pdf_doc, cleaned_page.page_index)
-            interpretation = self._request_visual_interpretation_for_page(
+            interpretation = self._request_image_interpretation_for_page(
                 image_data_url,
                 cleaned_page,
                 source_name=source_filename,
             )
-            if interpretation.has_meaningful_visual:
+            if interpretation.has_meaningful_image:
                 record.update(
                     {
-                        "has_meaningful_visual": True,
+                        "has_meaningful_image": True,
                         "summary": " ".join(interpretation.summary.split()).strip() or None,
                         "markdown": self._format_interpretation_markdown(
                             interpretation,
                             language=language,
-                            visual_kind=visual_kind,
+                            image_kind=image_kind,
                         )
                         or None,
                     }
                 )
-                stats["visual_pages_enriched"] = 1
+                stats["image_pages_enriched"] = 1
             return record, stats
         except Exception:
-            stats["visual_pages_failed"] = 1
+            stats["image_pages_failed"] = 1
             raise
         finally:
             if pdf_doc is not None:
@@ -250,21 +251,91 @@ class VisualAgent:
                 except Exception:
                     pass
 
-    def _request_visual_interpretation(
+    def _request_image_interpretation(
         self,
         image_data_url: str,
         page: Page,
         *,
         source_name: str | None = None,
-    ) -> VisualInterpretationPayload:
+    ) -> ImageInterpretationPayload:
+        language = self._infer_output_language(page, source_name=source_name)
         prompt = self._build_prompt(page, source_name=source_name)
+        result = self._post_image_interpretation_request(image_data_url, prompt, language=language)
+        if not result.has_meaningful_image and self._should_retry_empty_image_reading(page):
+            retry_prompt = (
+                prompt
+                + "\n\nEmpty-response correction: the user clicked Image Agent to progressively disclose the "
+                "original visual itself. Do not return has_meaningful_image=false for site photos, factory photos, "
+                "equipment photos, screenshots, scanned forms, stamps, signatures, maps, charts, floor plans, "
+                "layouts, tables rendered as images, or process diagrams. If the visual has no deep inference, "
+                "still provide a concise visible-content reading. Return false only for blank, purely decorative, "
+                "logo-only, watermark-only, border-only, or repeated letterhead/header/footer content."
+            )
+            result = self._post_image_interpretation_request(image_data_url, retry_prompt, language=language)
+        if not self._payload_matches_language(result, language):
+            retry_prompt = (
+                prompt
+                + "\n\nLanguage correction: your previous response mixed languages. "
+                + self._language_lock_instruction(language)
+            )
+            result = self._post_image_interpretation_request(image_data_url, retry_prompt, language=language)
+        if not self._payload_matches_language(result, language):
+            result = self._rewrite_payload_language(result, language=language)
+        if not self._payload_matches_language(result, language):
+            raise ValueError("Image Agent returned mixed-language output")
+        return result
+
+    @staticmethod
+    def _should_retry_empty_image_reading(page: Page) -> bool:
+        if page_has_image_content(page):
+            return True
+        haystack = "\n".join(
+            " ".join(block.text.split()).strip()
+            for block in page.blocks
+            if block.text.strip()
+        ).lower()
+        return any(
+            keyword in haystack
+            for keyword in (
+                "figure",
+                "image",
+                "photo",
+                "map",
+                "chart",
+                "diagram",
+                "plan",
+                "layout",
+                "flow",
+                "stamp",
+                "signature",
+                "图",
+                "照片",
+                "现场",
+                "平面",
+                "流程",
+                "示意",
+                "布置",
+                "分布",
+                "签章",
+                "印章",
+            )
+        )
+
+    def _post_image_interpretation_request(
+        self,
+        image_data_url: str,
+        prompt: str,
+        *,
+        language: str,
+    ) -> ImageInterpretationPayload:
         payload = {
             "model": self.model,
             "instructions": (
-                "You are Visual Agent. Analyze visually meaningful page graphics in a PDF. "
+                "You are Image Agent. Analyze meaningful page images and graphics in a PDF. "
+                f"{self._language_lock_instruction(language)} "
                 "This is on-demand progressive disclosure: the user clicked because normal Markdown cannot fully "
                 "expose the original image, map, figure, plan, chart, form, stamp, or diagram. Provide a full "
-                "visual reading, not a caption and not a generic summary. Extract the important visible content "
+                "image reading, not a caption and not a generic summary. Extract the important visible content "
                 "from maps, site plans, floor plans, hazard or control-zone distributions, process flows, water or "
                 "material balance diagrams, charts, plots, scanned tables, forms, stamps, signatures, layouts, "
                 "screenshots, photos, and scientific figures. Be concrete and grounded in what is visible. Do not "
@@ -289,13 +360,13 @@ class VisualAgent:
             "text": {
                 "format": {
                     "type": "json_schema",
-                    "name": "visual_page_interpretation",
+                    "name": "image_page_interpretation",
                     "strict": True,
                     "schema": {
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            "has_meaningful_visual": {"type": "boolean"},
+                            "has_meaningful_image": {"type": "boolean"},
                             "summary": {"type": "string"},
                             "key_elements": {
                                 "type": "array",
@@ -311,7 +382,7 @@ class VisualAgent:
                             },
                         },
                         "required": [
-                            "has_meaningful_visual",
+                            "has_meaningful_image",
                             "summary",
                             "key_elements",
                             "relationships_or_flow",
@@ -336,28 +407,97 @@ class VisualAgent:
         if not isinstance(output_text, str) or not output_text.strip():
             output_text = self._extract_output_text(data)
         if not output_text.strip():
-            raise ValueError("Visual Agent returned no structured output")
-        return VisualInterpretationPayload.model_validate(json.loads(output_text))
+            raise ValueError("Image Agent returned no structured output")
+        return ImageInterpretationPayload.model_validate(json.loads(output_text))
 
-    def _request_visual_interpretation_for_page(
+    def _rewrite_payload_language(
+        self,
+        payload: ImageInterpretationPayload,
+        *,
+        language: str,
+    ) -> ImageInterpretationPayload:
+        if not payload.has_meaningful_image:
+            return payload
+        language_name = "Simplified Chinese" if language == IMAGE_AGENT_LANGUAGE_ZH else "English"
+        request_payload = {
+            "model": self.model,
+            "instructions": (
+                f"Rewrite the provided Image Agent JSON into {language_name}. "
+                "Do not add new facts. Preserve numbers, units, proper nouns, visible labels, arrows, and uncertainty. "
+                f"{self._language_lock_instruction(language)}"
+            ),
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(payload.model_dump(), ensure_ascii=False),
+                        }
+                    ],
+                }
+            ],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "image_page_interpretation_language_rewrite",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "has_meaningful_image": {"type": "boolean"},
+                            "summary": {"type": "string"},
+                            "key_elements": {"type": "array", "items": {"type": "string"}},
+                            "relationships_or_flow": {"type": "array", "items": {"type": "string"}},
+                            "notes_or_uncertainty": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": [
+                            "has_meaningful_image",
+                            "summary",
+                            "key_elements",
+                            "relationships_or_flow",
+                            "notes_or_uncertainty",
+                        ],
+                    },
+                }
+            },
+            "max_output_tokens": 900,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        with httpx.Client(timeout=self.timeout_sec) as client:
+            response = client.post(self.endpoint, headers=headers, json=request_payload)
+            response.raise_for_status()
+            data = response.json()
+        output_text = data.get("output_text")
+        if not isinstance(output_text, str) or not output_text.strip():
+            output_text = self._extract_output_text(data)
+        if not output_text.strip():
+            return payload
+        return ImageInterpretationPayload.model_validate(json.loads(output_text))
+
+    def _request_image_interpretation_for_page(
         self,
         image_data_url: str,
         page: Page,
         *,
         source_name: str | None = None,
-    ) -> VisualInterpretationPayload:
-        signature = inspect.signature(self._request_visual_interpretation)
+    ) -> ImageInterpretationPayload:
+        signature = inspect.signature(self._request_image_interpretation)
         accepts_source_name = "source_name" in signature.parameters or any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in signature.parameters.values()
         )
         if accepts_source_name:
-            return self._request_visual_interpretation(
+            return self._request_image_interpretation(
                 image_data_url,
                 page,
                 source_name=source_name,
             )
-        return self._request_visual_interpretation(image_data_url, page)
+        return self._request_image_interpretation(image_data_url, page)
 
     @staticmethod
     def _extract_output_text(response_payload: dict[str, Any]) -> str:
@@ -384,38 +524,38 @@ class VisualAgent:
         return f"data:image/jpeg;base64,{encoded}"
 
     @staticmethod
-    def _strip_visual_agent_blocks(page: Page) -> Page:
+    def _strip_image_agent_blocks(page: Page) -> Page:
         return page.model_copy(
             update={
                 "blocks": [
-                    block for block in page.blocks if block.type.strip().lower() != VISUAL_AGENT_BLOCK_TYPE
+                    block for block in page.blocks if block.type.strip().lower() != IMAGE_AGENT_BLOCK_TYPE
                 ]
             }
         )
 
-    def _append_visual_agent_block(
+    def _append_image_agent_block(
         self,
         page: Page,
-        interpretation: VisualInterpretationPayload,
+        interpretation: ImageInterpretationPayload,
         *,
         source_name: str | None = None,
     ) -> Page:
         language = self._infer_output_language(page, source_name=source_name)
-        visual_kind = self._infer_visual_kind(page)
+        image_kind = self._infer_image_kind(page)
         block = Block(
-            id=f"p{page.page_index}_visual_agent",
-            type=VISUAL_AGENT_BLOCK_TYPE,
+            id=f"p{page.page_index}_image_agent",
+            type=IMAGE_AGENT_BLOCK_TYPE,
             text=self._format_interpretation_markdown(
                 interpretation,
                 language=language,
-                visual_kind=visual_kind,
+                image_kind=image_kind,
             ),
             source={
-                "agent": "visual-agent",
+                "agent": "image-agent",
                 "model": self.model,
-                "prompt_version": VISUAL_AGENT_PROMPT_VERSION,
+                "prompt_version": IMAGE_AGENT_PROMPT_VERSION,
                 "language": language,
-                "visual_kind": visual_kind,
+                "image_kind": image_kind,
                 "structured_output": interpretation.model_dump(),
             },
             page_index=page.page_index,
@@ -423,7 +563,7 @@ class VisualAgent:
         sorted_blocks = _sorted_blocks_for_insertion(page.blocks)
         insert_after = -1
         for index, existing_block in enumerate(sorted_blocks):
-            if block_type_has_visual_content(existing_block.type):
+            if block_type_has_image_content(existing_block.type):
                 insert_after = index
 
         if insert_after >= 0:
@@ -474,29 +614,71 @@ class VisualAgent:
     def _build_prompt(self, page: Page, *, source_name: str | None = None) -> str:
         cues = self._page_cues(page)
         language = self._infer_output_language(page, source_name=source_name)
-        visual_kind = self._infer_visual_kind(page)
-        language_label = "Simplified Chinese" if language == VISUAL_AGENT_LANGUAGE_ZH else "English"
-        kind_instruction = self._visual_kind_prompt_instruction(visual_kind)
+        image_kind = self._infer_image_kind(page)
+        language_label = "Simplified Chinese" if language == IMAGE_AGENT_LANGUAGE_ZH else "English"
+        kind_instruction = self._image_kind_prompt_instruction(image_kind)
         cue_text = "\n".join(f"- {cue}" for cue in cues) if cues else "- None"
         return (
             f"Page language: {language_label}.\n"
-            f"Likely visual type: {visual_kind}.\n"
-            "Decide whether this PDF page contains meaningful visual information beyond decorative elements.\n"
-            "If not, return has_meaningful_visual=false.\n"
-            "If yes, produce an on-demand full visual reading that helps a user audit the original page.\n"
-            "Write every field in the required output language. Do not switch languages.\n"
+            f"{self._language_lock_instruction(language)}\n"
+            f"Likely image type: {image_kind}.\n"
+            "Decide whether this PDF page contains meaningful image information beyond decorative elements.\n"
+            "Return has_meaningful_image=false only for blank, purely decorative, logo-only, watermark-only, border-only, or repeated letterhead/header/footer visuals.\n"
+            "Photos, site photos, factory photos, equipment photos, screenshots, scanned forms, stamps, signatures, maps, charts, floor plans, layouts, tables rendered as images, and process diagrams are meaningful even when a caption already exists.\n"
+            "If yes, produce an on-demand full image reading that helps a user audit the original page.\n"
             "Output format rules are strict:\n"
-            "- summary: exactly 1 short sentence. Explain the whole visual, its document purpose, and the main takeaway. This must be more useful than a figure caption.\n"
+            "- summary: exactly 1 short sentence. Explain the whole image, its document purpose, and the main takeaway. This must be more useful than a figure caption.\n"
             "- key_elements: 4 to 10 concrete items when visible. Preserve important labels, named regions, floors, rooms, nodes, axes, categories, legends, colors, measured values, units, stamps, signatures, locations, or objects. Do not include generic furniture.\n"
             "- relationships_or_flow: 2 to 10 factual items when visible. Capture arrows, sequence, source-to-target flow, spatial relationship, trend, comparison, hierarchy, grouping, risk concentration, dependency, or before/after relation.\n"
-            "- notes_or_uncertainty: 0 to 3 items. Use only for unreadable text, ambiguous arrows, cropped content, low confidence, or limits of the visual.\n"
-            "Do not fill fields with boilerplate. Empty arrays are preferred over repetitive filler. Avoid vague phrases like 'the diagram shows information'. If the visual is simple, be short; if it contains dense flow/data/layout information, be usefully detailed.\n"
-            "Do not repeat surrounding OCR/body text. Do preserve text inside the visual when it is needed to understand the image.\n"
+            "- notes_or_uncertainty: 0 to 3 items. Use only for unreadable text, ambiguous arrows, cropped content, low confidence, or limits of the image.\n"
+            "Do not fill fields with boilerplate. Empty arrays are preferred over repetitive filler. Avoid vague phrases like 'the diagram shows information'. If the image is simple, be short; if it contains dense flow/data/layout information, be usefully detailed.\n"
+            "Do not repeat surrounding OCR/body text. Do preserve text inside the image when it is needed to understand the image.\n"
             "For numbers, keep units exactly as visible when readable. For arrows, prefer A -> B wording. For maps/plans, name the subject, boundary or zone relation, marked location, legend meaning, and where important areas cluster when visible. For flow or balance diagrams, do not stop at naming nodes; walk through every visible branch from source to sink.\n"
             f"{kind_instruction}\n"
             "Use these extracted page cues only as hints:\n"
             f"{cue_text}"
         )
+
+    @staticmethod
+    def _language_lock_instruction(language: str) -> str:
+        if language == IMAGE_AGENT_LANGUAGE_ZH:
+            return (
+                "Output language lock: write summary, key_elements, relationships_or_flow, and "
+                "notes_or_uncertainty entirely in Simplified Chinese. Do not use English prose. "
+                "Translate labels like red mark, flattened area, map, warehouse, or flow into Chinese unless the "
+                "English phrase is an exact original label visible in the image."
+            )
+        return (
+            "Output language lock: write summary, key_elements, relationships_or_flow, and "
+            "notes_or_uncertainty entirely in English. Do not use Chinese prose unless it is an exact original "
+            "label visible in the image."
+        )
+
+    @staticmethod
+    def _payload_language_text(payload: ImageInterpretationPayload) -> str:
+        return "\n".join(
+            [
+                payload.summary,
+                *payload.key_elements,
+                *payload.relationships_or_flow,
+                *payload.notes_or_uncertainty,
+            ]
+        )
+
+    def _payload_matches_language(self, payload: ImageInterpretationPayload, language: str) -> bool:
+        if not payload.has_meaningful_image:
+            return True
+        text = self._payload_language_text(payload)
+        cjk_count = len(re.findall(r"[\u3400-\u9fff]", text))
+        latin_words = re.findall(r"[A-Za-z]{3,}", text)
+        if language == IMAGE_AGENT_LANGUAGE_ZH:
+            if cjk_count < 8:
+                return False
+            # Allow exact labels, units, and abbreviations, but reject English prose dominating the answer.
+            return len(latin_words) <= max(6, cjk_count // 8)
+        if cjk_count > 12:
+            return False
+        return True
 
     @staticmethod
     def _page_cues(page: Page) -> list[str]:
@@ -519,13 +701,13 @@ class VisualAgent:
 
     def _format_interpretation_markdown(
         self,
-        interpretation: VisualInterpretationPayload,
+        interpretation: ImageInterpretationPayload,
         *,
         language: str,
-        visual_kind: str,
+        image_kind: str,
     ) -> str:
         sections: list[str] = []
-        copy = _LOCALIZED_COPY.get(language, _LOCALIZED_COPY[VISUAL_AGENT_LANGUAGE_EN])
+        copy = _LOCALIZED_COPY.get(language, _LOCALIZED_COPY[IMAGE_AGENT_LANGUAGE_EN])
         summary = " ".join(interpretation.summary.split()).strip()
         if summary:
             sections.append(summary)
@@ -537,7 +719,7 @@ class VisualAgent:
         relationships = self._dedupe_lines(
             interpretation.relationships_or_flow,
             against=[summary, *key_elements],
-            max_items=self._relationship_item_limit(visual_kind),
+            max_items=self._relationship_item_limit(image_kind),
         )
         if relationships:
             sections.append(copy["relationships"] + "\n" + "\n".join(f"- {item}" for item in relationships))
@@ -553,35 +735,37 @@ class VisualAgent:
         return "\n\n".join(sections).strip()
 
     @staticmethod
-    def _relationship_item_limit(visual_kind: str) -> int:
-        if visual_kind == VISUAL_AGENT_KIND_WORKFLOW:
+    def _relationship_item_limit(image_kind: str) -> int:
+        if image_kind == IMAGE_AGENT_KIND_WORKFLOW:
             return 10
-        if visual_kind == VISUAL_AGENT_KIND_MAP:
+        if image_kind == IMAGE_AGENT_KIND_MAP:
             return 1
         return 4
 
     def _infer_output_language(self, page: Page, *, source_name: str | None = None) -> str:
-        if source_name:
-            source_stem = Path(source_name).stem
-            if re.search(r"[\u3400-\u9fff]", source_stem):
-                return VISUAL_AGENT_LANGUAGE_ZH
-            if re.search(r"[A-Za-z]", source_stem):
-                return VISUAL_AGENT_LANGUAGE_EN
-
         sample = "\n".join(self._page_cues(page))
         if not sample:
             sample = "\n".join(
                 " ".join(block.text.split()).strip()
                 for block in page.blocks
-                if block.type.strip().lower() != VISUAL_AGENT_BLOCK_TYPE and block.text.strip()
+                if block.type.strip().lower() != IMAGE_AGENT_BLOCK_TYPE and block.text.strip()
             )
         cjk_count = len(re.findall(r"[\u3400-\u9fff]", sample))
         latin_count = len(re.findall(r"[A-Za-z]", sample))
         if cjk_count >= 8 and cjk_count >= max(4, int(latin_count * 0.35)):
-            return VISUAL_AGENT_LANGUAGE_ZH
-        return VISUAL_AGENT_LANGUAGE_EN
+            return IMAGE_AGENT_LANGUAGE_ZH
+        if latin_count >= 20 and latin_count >= cjk_count * 2:
+            return IMAGE_AGENT_LANGUAGE_EN
 
-    def _infer_visual_kind(self, page: Page) -> str:
+        if source_name:
+            source_stem = Path(source_name).stem
+            if re.search(r"[\u3400-\u9fff]", source_stem):
+                return IMAGE_AGENT_LANGUAGE_ZH
+            if re.search(r"[A-Za-z]", source_stem):
+                return IMAGE_AGENT_LANGUAGE_EN
+        return IMAGE_AGENT_LANGUAGE_EN
+
+    def _infer_image_kind(self, page: Page) -> str:
         haystack = "\n".join(self._page_cues(page)).lower()
         if any(
             keyword in haystack
@@ -608,7 +792,7 @@ class VisualAgent:
                 "场地",
             )
         ):
-            return VISUAL_AGENT_KIND_MAP
+            return IMAGE_AGENT_KIND_MAP
         if any(
             keyword in haystack
             for keyword in (
@@ -632,7 +816,7 @@ class VisualAgent:
                 "废水",
             )
         ):
-            return VISUAL_AGENT_KIND_WORKFLOW
+            return IMAGE_AGENT_KIND_WORKFLOW
         if any(
             keyword in haystack
             for keyword in (
@@ -664,19 +848,19 @@ class VisualAgent:
                 "表格",
             )
         ) or any(block.type.strip().lower() == "table" for block in page.blocks):
-            return VISUAL_AGENT_KIND_TABLE
-        return VISUAL_AGENT_KIND_DIAGRAM
+            return IMAGE_AGENT_KIND_TABLE
+        return IMAGE_AGENT_KIND_DIAGRAM
 
     @staticmethod
-    def _visual_kind_prompt_instruction(visual_kind: str) -> str:
-        if visual_kind == VISUAL_AGENT_KIND_MAP:
+    def _image_kind_prompt_instruction(image_kind: str) -> str:
+        if image_kind == IMAGE_AGENT_KIND_MAP:
             return (
                 "For maps, site plans, floor plans, and distribution layouts, read the whole graphic. Identify the subject "
                 "and purpose; group visible areas by floor, zone, building, or region; explain legend colors and symbols; "
                 "name marked project/site positions, boundaries, hazard/control/sensitive zones, nearby areas, orientation, "
                 "and scale when visible. Explain where important areas are concentrated and what that implies for review."
             )
-        if visual_kind == VISUAL_AGENT_KIND_WORKFLOW:
+        if image_kind == IMAGE_AGENT_KIND_WORKFLOW:
             return (
                 "For workflows, process diagrams, water balance diagrams, and material balance diagrams, read the diagram "
                 "as a process walkthrough. In relationships_or_flow, list every visible main branch separately from source "
@@ -685,7 +869,7 @@ class VisualAgent:
                 "branch. Do not only summarize the diagram; explain the full flow so the user can audit where each input "
                 "goes."
             )
-        if visual_kind == VISUAL_AGENT_KIND_TABLE:
+        if image_kind == IMAGE_AGENT_KIND_TABLE:
             return (
                 "For tables, charts, and plots, identify the dataset, rows/categories/series, axes, units, main trend or "
                 "comparison, outliers, and the most important readable values. Explain what changed, which category is "

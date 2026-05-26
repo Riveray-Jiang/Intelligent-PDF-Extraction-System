@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 
 from backend import pipeline_graph
 from backend.types import Block
@@ -55,27 +55,27 @@ class _FakeValidationAgent:
         )
 
 
-class _FakeVisualAgent:
+class _FakeImageAgent:
     def capability_snapshot(self):  # noqa: ANN001
         return {
             "enabled": True,
-            "name": "Visual Agent",
+            "name": "Image Agent",
             "model": "gpt-4o",
-            "visual_pages_detected": 0,
-            "visual_pages_enriched": 0,
-            "visual_pages_failed": 0,
+            "image_pages_detected": 0,
+            "image_pages_enriched": 0,
+            "image_pages_failed": 0,
         }
 
     def enrich_document(self, document_ir, pdf_path, page_indices=None):  # noqa: ANN001
         stats = self.capability_snapshot()
-        stats["visual_pages_detected"] = len(page_indices or [])
-        stats["visual_pages_enriched"] = len(page_indices or [])
+        stats["image_pages_detected"] = len(page_indices or [])
+        stats["image_pages_enriched"] = len(page_indices or [])
         return document_ir, stats
 
 
 @pytest.fixture(autouse=True)
-def _stub_visual_agent(monkeypatch):  # noqa: ANN001
-    monkeypatch.setattr(pipeline_graph, "VISUAL_AGENT", _FakeVisualAgent())
+def _stub_image_agent(monkeypatch):  # noqa: ANN001
+    monkeypatch.setattr(pipeline_graph, "IMAGE_AGENT", _FakeImageAgent())
 
 
 class _TrackingParseAgent:
@@ -193,7 +193,7 @@ def test_pipeline_graph_invocation(monkeypatch, tmp_path) -> None:
 
     assert isinstance(result["document_ir"], DocumentIR)
     assert isinstance(result["validation"], ValidationReport)
-    assert result["visual_agent"]["enabled"] is True
+    assert result["image_agent"]["enabled"] is True
 
 
 def test_pipeline_graph_cascade_triggers_and_merges_failed_pages(monkeypatch, tmp_path) -> None:

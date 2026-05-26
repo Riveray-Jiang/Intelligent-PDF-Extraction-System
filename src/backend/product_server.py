@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import timezone
@@ -21,6 +22,7 @@ from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -39,8 +41,8 @@ from .selection_agent import SelectionAgent
 from .selection_agent import sanitize_outline_items
 from .types import Block
 from .types import Page
-from .visual_agent import VisualAgent
-from .visual_agent import page_has_visual_content
+from .image_agent import ImageAgent
+from .image_agent import page_has_image_content
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -56,11 +58,11 @@ CURRENT_REPAIR_ENGINE_VERSION = "mineru2.5-pro-direct-v1"
 INGESTION_AGENT = IngestionAgent()
 SELECTION_AGENT = SelectionAgent()
 RUN_HISTORY_LOCK = threading.Lock()
-VISUAL_AGENT = VisualAgent()
+IMAGE_AGENT = ImageAgent()
 PADDLE_ADAPTER = PaddleAdapter()
 IR_BUILDER = IRBuilderAgent()
 PADDLE_LOCAL_FALLBACK_CONFIG = REPO_ROOT / "configs" / "engines_prod_vlm_repair.yaml"
-LOCAL_VISUAL_FALLBACK_CACHE_VERSION = 1
+LOCAL_IMAGE_FALLBACK_CACHE_VERSION = 1
 
 
 def _parse_multipart_form_data(
@@ -180,7 +182,7 @@ def append_run_history(job: "JobRecord") -> None:
         "duration_sec": duration_sec,
         "cascade_attempt": run_insights["cascade_attempt"],
         "failed_pages_count": run_insights["failed_pages_count"],
-        "visual_agent": run_insights["visual_agent"],
+        "image_agent": run_insights["image_agent"],
         "engine_config": job.engine_config.name,
         "repair_engine_version": CURRENT_REPAIR_ENGINE_VERSION if job.run_mode == "reliable" else None,
         "job_dir": str(job.job_dir),
@@ -256,7 +258,7 @@ def read_job_run_history(
                 "duration_sec": record.get("duration_sec"),
                 "failed_pages_count": record.get("failed_pages_count"),
                 "cascade_attempt": record.get("cascade_attempt"),
-                "visual_agent": record.get("visual_agent") or {},
+                "image_agent": record.get("image_agent") or {},
                 "engine_config": record.get("engine_config"),
                 "repair_engine_version": record.get("repair_engine_version"),
                 "output_dir": output_dir_value,
@@ -556,7 +558,7 @@ def _preview_content_blocks(page: Page) -> list[Block]:
     filtered: list[Block] = []
     for block in page.blocks:
         block_type = block.type.lower().strip()
-        if block_type in {"header", "footer", "discarded", "visual_interpretation"}:
+        if block_type in {"header", "footer", "discarded", "image_interpretation"}:
             continue
         filtered.append(block)
     return filtered
@@ -594,11 +596,6 @@ def _page_text_tokens(page: Page) -> set[str]:
     return set(re.findall(r"[A-Za-z0-9\u4e00-\u9fff]{2,}", raw))
 
 
-def _block_source_raw(block: Block) -> dict[str, Any]:
-    raw = block.source.get("raw") if isinstance(block.source, dict) else None
-    return raw if isinstance(raw, dict) else {}
-
-
 def _looks_like_bad_reliable_override(candidate_page: Page, fast_page: Page | None) -> bool:
     if fast_page is None:
         return False
@@ -617,13 +614,13 @@ def _looks_like_bad_reliable_override(candidate_page: Page, fast_page: Page | No
     ]
     fast_tables = [block for block in fast_blocks if block.type.lower().strip() == "table"]
     fast_non_table_count = sum(1 for block in fast_blocks if block.type.lower().strip() != "table")
-    fast_has_visual = any(block.type.lower().strip() in {"image", "figure", "image_body"} for block in fast_blocks)
+    fast_has_image = any(block.type.lower().strip() in {"image", "figure", "image_body"} for block in fast_blocks)
 
     if len(candidate_blocks) != 1 or len(candidate_tables) != 1 or candidate_textish:
         return False
     if len(fast_blocks) == 1 and fast_tables:
         return False
-    if fast_non_table_count < 2 and not fast_has_visual:
+    if fast_non_table_count < 2 and not fast_has_image:
         return False
 
     candidate_table = candidate_tables[0]
@@ -639,43 +636,43 @@ def _looks_like_bad_reliable_override(candidate_page: Page, fast_page: Page | No
     return True
 
 
-def local_visual_fallback_cache_path(output_dir: Path) -> Path:
-    return output_dir / "local_visual_fallback_cache.json"
+def local_image_fallback_cache_path(output_dir: Path) -> Path:
+    return output_dir / "local_image_fallback_cache.json"
 
 
-def _load_local_visual_fallback_cache(output_dir: Path) -> dict[str, Any]:
-    cache_path = local_visual_fallback_cache_path(output_dir)
+def _load_local_image_fallback_cache(output_dir: Path) -> dict[str, Any]:
+    cache_path = local_image_fallback_cache_path(output_dir)
     if not cache_path.exists():
-        return {"version": LOCAL_VISUAL_FALLBACK_CACHE_VERSION, "pages": {}}
+        return {"version": LOCAL_IMAGE_FALLBACK_CACHE_VERSION, "pages": {}}
     try:
         payload = json.loads(cache_path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, json.JSONDecodeError):
-        return {"version": LOCAL_VISUAL_FALLBACK_CACHE_VERSION, "pages": {}}
-    if not isinstance(payload, dict) or payload.get("version") != LOCAL_VISUAL_FALLBACK_CACHE_VERSION:
-        return {"version": LOCAL_VISUAL_FALLBACK_CACHE_VERSION, "pages": {}}
+        return {"version": LOCAL_IMAGE_FALLBACK_CACHE_VERSION, "pages": {}}
+    if not isinstance(payload, dict) or payload.get("version") != LOCAL_IMAGE_FALLBACK_CACHE_VERSION:
+        return {"version": LOCAL_IMAGE_FALLBACK_CACHE_VERSION, "pages": {}}
     pages = payload.get("pages")
     if not isinstance(pages, dict):
         payload["pages"] = {}
     return payload
 
 
-def load_local_visual_fallback_page_cache(output_dir: Path, page_number: int) -> dict[str, Any]:
-    pages = _load_local_visual_fallback_cache(output_dir).get("pages")
+def load_local_image_fallback_page_cache(output_dir: Path, page_number: int) -> dict[str, Any]:
+    pages = _load_local_image_fallback_cache(output_dir).get("pages")
     if not isinstance(pages, dict):
         return {}
     record = pages.get(str(page_number))
     return record if isinstance(record, dict) else {}
 
 
-def save_local_visual_fallback_page_cache(output_dir: Path, page_number: int, record: dict[str, Any]) -> None:
-    payload = _load_local_visual_fallback_cache(output_dir)
+def save_local_image_fallback_page_cache(output_dir: Path, page_number: int, record: dict[str, Any]) -> None:
+    payload = _load_local_image_fallback_cache(output_dir)
     pages = payload.get("pages")
     if not isinstance(pages, dict):
         pages = {}
         payload["pages"] = pages
-    payload["version"] = LOCAL_VISUAL_FALLBACK_CACHE_VERSION
+    payload["version"] = LOCAL_IMAGE_FALLBACK_CACHE_VERSION
     pages[str(page_number)] = record
-    cache_path = local_visual_fallback_cache_path(output_dir)
+    cache_path = local_image_fallback_cache_path(output_dir)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -740,13 +737,13 @@ def _deemphasize_red_marks(image: Image.Image) -> Image.Image:
 
 
 def _score_fallback_markdown(markdown: str) -> int:
-    cleaned = re.sub(r"\[Visual content present\]", "", markdown, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"\[Image content present\]", "", markdown, flags=re.IGNORECASE).strip()
     if not cleaned or cleaned == "_No extracted content on this page._":
         return 0
     return len(re.sub(r"\s+", "", cleaned))
 
 
-def _block_needs_local_visual_fallback(block: Block) -> bool:
+def _block_needs_local_image_fallback(block: Block) -> bool:
     block_type = block.type.lower().strip()
     if block_type not in {"image", "figure", "image_body"}:
         return False
@@ -793,7 +790,7 @@ def _iter_fallback_crop_variants(image: Image.Image) -> list[tuple[str, Image.Im
     return variants
 
 
-def _run_local_visual_fallback_for_block(job: "JobRecord", page_number: int, page: Page, block: Block) -> dict[str, Any] | None:
+def _run_local_image_fallback_for_block(job: "JobRecord", page_number: int, page: Page, block: Block) -> dict[str, Any] | None:
     preview_path = ensure_preview_image(job, page_number)
     with Image.open(preview_path) as preview_image:
         image = preview_image.convert("RGB")
@@ -829,26 +826,26 @@ def _run_local_visual_fallback_for_block(job: "JobRecord", page_number: int, pag
     return best_result if best_score > 0 else None
 
 
-def apply_local_visual_fallback(job: "JobRecord", output_dir: Path, page_number: int, page: Page) -> Page:
+def apply_local_image_fallback(job: "JobRecord", output_dir: Path, page_number: int, page: Page) -> Page:
     # Product repair now uses the dedicated MinerU2.5-Pro repair path. Keep this
     # hook inert so preview/merged output is not silently changed by Paddle.
     return page
 
-    cache = load_local_visual_fallback_page_cache(output_dir, page_number)
+    cache = load_local_image_fallback_page_cache(output_dir, page_number)
     cached_blocks = cache.get("blocks") if isinstance(cache.get("blocks"), dict) else {}
     updated_blocks: list[Block] = []
     cache_dirty = False
 
     for block in page.blocks:
         updated_block = block
-        if _block_needs_local_visual_fallback(block):
+        if _block_needs_local_image_fallback(block):
             block_cache = cached_blocks.get(block.id) if isinstance(cached_blocks, dict) else None
             fallback_markdown = ""
             if isinstance(block_cache, dict):
                 fallback_markdown = str(block_cache.get("markdown") or "").strip()
             if not fallback_markdown:
                 try:
-                    generated = _run_local_visual_fallback_for_block(job, page_number, page, block)
+                    generated = _run_local_image_fallback_for_block(job, page_number, page, block)
                 except Exception:
                     generated = None
                 if generated is not None:
@@ -862,9 +859,16 @@ def apply_local_visual_fallback(job: "JobRecord", output_dir: Path, page_number:
         updated_blocks.append(updated_block)
 
     if cache_dirty:
-        save_local_visual_fallback_page_cache(output_dir, page_number, {"blocks": cached_blocks})
+        save_local_image_fallback_page_cache(output_dir, page_number, {"blocks": cached_blocks})
 
     return page.model_copy(update={"blocks": updated_blocks})
+
+
+def format_merged_page_markdown(page_number: int, page_markdown: str) -> str:
+    content = page_markdown.strip()
+    if not content:
+        content = "_No extracted content on this page._"
+    return f"## Page {page_number}\n\n{content}"
 
 
 def build_merged_output(job: "JobRecord") -> tuple[dict[str, Any], str] | None:
@@ -896,11 +900,11 @@ def build_merged_output(job: "JobRecord") -> tuple[dict[str, Any], str] | None:
         if page_payload is None:
             continue
 
-        page_model = apply_local_visual_fallback(job, Path(str(output_dir)), page_number, build_page_model(page_payload))
+        page_model = apply_local_image_fallback(job, Path(str(output_dir)), page_number, build_page_model(page_payload))
         merged_pages.append(page_model_to_payload(page_model))
         markdown = page_to_preview_markdown(page_model).strip()
         if markdown:
-            merged_markdown_parts.append(markdown)
+            merged_markdown_parts.append(format_merged_page_markdown(page_number, markdown))
 
     if not merged_pages:
         return None
@@ -913,6 +917,57 @@ def build_merged_output(job: "JobRecord") -> tuple[dict[str, Any], str] | None:
     return merged_document_ir, merged_markdown
 
 
+def build_merged_output_bundle(job: "JobRecord") -> tuple[bytes, str] | None:
+    merged_output = build_merged_output(job)
+    if merged_output is None:
+        return None
+
+    merged_document_ir, merged_markdown = merged_output
+    pages = merged_document_ir.get("pages") if isinstance(merged_document_ir.get("pages"), list) else []
+    page_numbers = sorted(
+        {
+            int(page.get("page_index", 0)) + 1
+            for page in pages
+            if isinstance(page, dict)
+        }
+    )
+    metadata = {
+        "source_file": job.original_filename,
+        "job_id": job.job_id,
+        "document_id": job.document_id,
+        "file_version": int(job.file_version),
+        "page_count": int(job.ingestion.get("page_count", 0)),
+        "output_pages": page_numbers,
+        "generated_at": utc_now(),
+        "contents": [
+            "document.md",
+            "document_ir.json",
+            "metadata.json",
+            "pages/page_XXXX.md",
+        ],
+    }
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as handle:
+        handle.writestr("document.md", merged_markdown)
+        handle.writestr("document_ir.json", json.dumps(merged_document_ir, ensure_ascii=False, indent=2))
+        handle.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
+        for page_payload in pages:
+            if not isinstance(page_payload, dict):
+                continue
+            try:
+                page_model = build_page_model(page_payload)
+                page_markdown = page_to_preview_markdown(page_model).strip()
+                page_number = int(page_model.page_index) + 1
+            except Exception:
+                continue
+            if page_markdown:
+                handle.writestr(f"pages/page_{page_number:04d}.md", page_markdown)
+
+    stem = Path(sanitize_filename(job.original_filename)).stem or "document"
+    return archive.getvalue(), f"{stem}_output.zip"
+
+
 def resolve_output_dir(job: "JobRecord", run_id: str | None = None) -> Path:
     if run_id:
         return job.default_output_dir / run_id / "output"
@@ -921,31 +976,45 @@ def resolve_output_dir(job: "JobRecord", run_id: str | None = None) -> Path:
     return job.default_output_dir
 
 
-def visual_agent_cache_path(job: "JobRecord") -> Path:
-    return job.job_dir / "visual_agent_cache.json"
+def resolve_page_preview_output(job: "JobRecord", page_number: int, run_id: str | None = None) -> tuple[Path, str | None]:
+    if run_id:
+        return resolve_output_dir(job, run_id), run_id
+
+    plan = build_effective_output_plan(job)
+    if plan is not None:
+        entry = plan["effective_page_runs"].get(page_number)
+        output_dir = entry.get("output_dir") if entry else None
+        if output_dir:
+            return Path(str(output_dir)), entry.get("run_id")
+
+    return resolve_output_dir(job), job.run_id
 
 
-def legacy_visual_agent_cache_path(output_dir: Path) -> Path:
-    return output_dir / "visual_agent_cache.json"
+def image_agent_cache_path(job: "JobRecord") -> Path:
+    return job.job_dir / "image_agent_cache.json"
 
 
-VISUAL_AGENT_CACHE_VERSION = 8
+def legacy_image_agent_cache_path(output_dir: Path) -> Path:
+    return output_dir / "image_agent_cache.json"
 
 
-def _load_visual_agent_cache_payload(cache_path: Path) -> dict[str, Any] | None:
+IMAGE_AGENT_CACHE_VERSION = 11
+
+
+def _load_image_agent_cache_payload(cache_path: Path) -> dict[str, Any] | None:
     if not cache_path.exists():
         return None
     try:
         payload = json.loads(cache_path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, json.JSONDecodeError):
         return None
-    if payload.get("version") != VISUAL_AGENT_CACHE_VERSION:
+    if payload.get("version") != IMAGE_AGENT_CACHE_VERSION:
         return None
     return payload if isinstance(payload, dict) else None
 
 
-def _load_visual_agent_cache_record_from_path(cache_path: Path, page_number: int) -> dict[str, Any] | None:
-    payload = _load_visual_agent_cache_payload(cache_path)
+def _load_image_agent_cache_record_from_path(cache_path: Path, page_number: int) -> dict[str, Any] | None:
+    payload = _load_image_agent_cache_payload(cache_path)
     if payload is None:
         return None
     pages = payload.get("pages")
@@ -955,32 +1024,32 @@ def _load_visual_agent_cache_record_from_path(cache_path: Path, page_number: int
     return record if isinstance(record, dict) else None
 
 
-def load_visual_agent_cache_record(
+def load_image_agent_cache_record(
     job: "JobRecord",
     page_number: int,
     *,
     output_dir: Path | None = None,
 ) -> dict[str, Any] | None:
-    cache_path = visual_agent_cache_path(job)
-    record = _load_visual_agent_cache_record_from_path(cache_path, page_number)
+    cache_path = image_agent_cache_path(job)
+    record = _load_image_agent_cache_record_from_path(cache_path, page_number)
     if record is not None:
         return record
 
     if output_dir is None:
         return None
 
-    legacy_cache_path = legacy_visual_agent_cache_path(output_dir)
-    record = _load_visual_agent_cache_record_from_path(legacy_cache_path, page_number)
+    legacy_cache_path = legacy_image_agent_cache_path(output_dir)
+    record = _load_image_agent_cache_record_from_path(legacy_cache_path, page_number)
     if record is None:
         return None
-    save_visual_agent_cache_record(job, page_number, record)
+    save_image_agent_cache_record(job, page_number, record)
     return record
 
 
-def save_visual_agent_cache_record(job: "JobRecord", page_number: int, record: dict[str, Any]) -> None:
-    cache_path = visual_agent_cache_path(job)
-    payload: dict[str, Any] = {"version": VISUAL_AGENT_CACHE_VERSION, "pages": {}}
-    existing = _load_visual_agent_cache_payload(cache_path)
+def save_image_agent_cache_record(job: "JobRecord", page_number: int, record: dict[str, Any]) -> None:
+    cache_path = image_agent_cache_path(job)
+    payload: dict[str, Any] = {"version": IMAGE_AGENT_CACHE_VERSION, "pages": {}}
+    existing = _load_image_agent_cache_payload(cache_path)
     if existing is not None:
         payload = existing
 
@@ -988,44 +1057,44 @@ def save_visual_agent_cache_record(job: "JobRecord", page_number: int, record: d
     if not isinstance(pages, dict):
         pages = {}
         payload["pages"] = pages
-    payload["version"] = VISUAL_AGENT_CACHE_VERSION
+    payload["version"] = IMAGE_AGENT_CACHE_VERSION
     pages[str(page_number)] = record
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def extract_visual_agent_preview(page: Page, cached_record: dict[str, Any] | None = None) -> dict[str, Any]:
+def extract_image_agent_preview(page: Page, cached_record: dict[str, Any] | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "visual_alt_text": None,
-        "visual_interpretation_markdown": None,
-        "visual_agent_language": None,
-        "visual_agent_kind": None,
-        "visual_agent_generated": False,
-        "visual_agent_empty": False,
+        "image_alt_text": None,
+        "image_interpretation_markdown": None,
+        "image_agent_language": None,
+        "image_agent_kind": None,
+        "image_agent_generated": False,
+        "image_agent_empty": False,
     }
-    visual_block = next((block for block in page.blocks if block.type.lower() == "visual_interpretation"), None)
-    if visual_block is not None:
-        source = visual_block.source if isinstance(visual_block.source, dict) else {}
+    image_block = next((block for block in page.blocks if block.type.lower() == "image_interpretation"), None)
+    if image_block is not None:
+        source = image_block.source if isinstance(image_block.source, dict) else {}
         structured = source.get("structured_output") if isinstance(source.get("structured_output"), dict) else {}
         summary = str(structured.get("summary") or "").strip()
-        markdown = str(visual_block.text or "").strip()
-        result["visual_alt_text"] = summary or None
-        result["visual_interpretation_markdown"] = markdown or None
-        result["visual_agent_language"] = str(source.get("language") or "").strip() or None
-        result["visual_agent_kind"] = str(source.get("visual_kind") or "").strip() or None
-        result["visual_agent_generated"] = True
-        result["visual_agent_empty"] = False
+        markdown = str(image_block.text or "").strip()
+        result["image_alt_text"] = summary or None
+        result["image_interpretation_markdown"] = markdown or None
+        result["image_agent_language"] = str(source.get("language") or "").strip() or None
+        result["image_agent_kind"] = str(source.get("image_kind") or "").strip() or None
+        result["image_agent_generated"] = True
+        result["image_agent_empty"] = False
         return result
 
     if not isinstance(cached_record, dict):
         return result
 
-    result["visual_alt_text"] = str(cached_record.get("summary") or "").strip() or None
-    result["visual_interpretation_markdown"] = str(cached_record.get("markdown") or "").strip() or None
-    result["visual_agent_language"] = str(cached_record.get("language") or "").strip() or None
-    result["visual_agent_kind"] = str(cached_record.get("visual_kind") or "").strip() or None
-    result["visual_agent_generated"] = bool(cached_record.get("generated", True))
-    result["visual_agent_empty"] = not bool(cached_record.get("has_meaningful_visual", False))
+    result["image_alt_text"] = str(cached_record.get("summary") or "").strip() or None
+    result["image_interpretation_markdown"] = str(cached_record.get("markdown") or "").strip() or None
+    result["image_agent_language"] = str(cached_record.get("language") or "").strip() or None
+    result["image_agent_kind"] = str(cached_record.get("image_kind") or "").strip() or None
+    result["image_agent_generated"] = bool(cached_record.get("generated", True))
+    result["image_agent_empty"] = not bool(cached_record.get("has_meaningful_image", False))
     return result
 
 
@@ -1094,23 +1163,23 @@ def read_run_insights(job: "JobRecord") -> dict[str, Any]:
     validation_report = job.artifact_paths()["validation_report.json"]
     cascade_attempt = None
     failed_pages_count = None
-    visual_agent: dict[str, Any] = {
+    image_agent: dict[str, Any] = {
         "enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
-        "name": "Visual Agent",
+        "name": "Image Agent",
         "model": "gpt-4o" if bool(os.getenv("OPENAI_API_KEY", "").strip()) else None,
-        "visual_pages_detected": 0,
-        "visual_pages_enriched": 0,
-        "visual_pages_failed": 0,
+        "image_pages_detected": 0,
+        "image_pages_enriched": 0,
+        "image_pages_failed": 0,
     }
 
     if pipeline_state.exists():
         try:
             pipeline_payload = json.loads(pipeline_state.read_text(encoding="utf-8"))
             cascade_attempt = pipeline_payload.get("cascade_attempt")
-            raw_visual_agent = pipeline_payload.get("visual_agent")
-            if isinstance(raw_visual_agent, dict):
-                visual_agent.update(raw_visual_agent)
-                visual_agent["name"] = "Visual Agent"
+            raw_image_agent = pipeline_payload.get("image_agent")
+            if isinstance(raw_image_agent, dict):
+                image_agent.update(raw_image_agent)
+                image_agent["name"] = "Image Agent"
         except (OSError, json.JSONDecodeError):
             cascade_attempt = None
     if validation_report.exists():
@@ -1123,7 +1192,7 @@ def read_run_insights(job: "JobRecord") -> dict[str, Any]:
     return {
         "cascade_attempt": cascade_attempt,
         "failed_pages_count": failed_pages_count,
-        "visual_agent": visual_agent,
+        "image_agent": image_agent,
     }
 
 
@@ -1308,7 +1377,7 @@ class JobRecord:
         }
         snapshot["cascade_attempt"] = run_insights["cascade_attempt"]
         snapshot["failed_pages_count"] = run_insights["failed_pages_count"]
-        snapshot["visual_agent"] = run_insights["visual_agent"]
+        snapshot["image_agent"] = run_insights["image_agent"]
         snapshot["artifacts"] = {
             name: f"/api/jobs/{self.job_id}/artifact/{name}"
             for name, exists in {
@@ -1782,6 +1851,9 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
         if job and len(path_parts) == 4 and path_parts[:3] == ["api", "jobs", job.job_id] and path_parts[3] == "file-history":
             self._send_json(build_file_history_payload(job))
             return
+        if job and len(path_parts) == 4 and path_parts[:3] == ["api", "jobs", job.job_id] and path_parts[3] == "download-output.zip":
+            self._serve_merged_output_bundle(job)
+            return
         if (
             job
             and len(path_parts) == 7
@@ -1830,8 +1902,8 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
         if job and len(path_parts) == 4 and path_parts[:3] == ["api", "jobs", job.job_id] and path_parts[3] == "cancel":
             self._handle_cancel(job)
             return
-        if job and len(path_parts) == 4 and path_parts[:3] == ["api", "jobs", job.job_id] and path_parts[3] == "visual-agent":
-            self._handle_visual_agent(job)
+        if job and len(path_parts) == 4 and path_parts[:3] == ["api", "jobs", job.job_id] and path_parts[3] == "image-agent":
+            self._handle_image_agent(job)
             return
 
         self._send_text(f"Route not found: {parsed.path}", status=HTTPStatus.NOT_FOUND)
@@ -1964,7 +2036,7 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
 
         self._send_json(job.status_snapshot(), status=HTTPStatus.ACCEPTED)
 
-    def _handle_visual_agent(self, job: JobRecord) -> None:
+    def _handle_image_agent(self, job: JobRecord) -> None:
         try:
             payload = self._read_json()
         except json.JSONDecodeError:
@@ -1981,41 +2053,39 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
         if page_number < 1:
             self._send_text("Invalid page.", status=HTTPStatus.BAD_REQUEST)
             return
-        if not VISUAL_AGENT.enabled:
-            self._send_text("Visual Agent is unavailable.", status=HTTPStatus.CONFLICT)
+        if not IMAGE_AGENT.enabled:
+            self._send_text("Image Agent is unavailable.", status=HTTPStatus.CONFLICT)
             return
 
-        output_dir = resolve_output_dir(job, run_id)
+        output_dir, resolved_run_id = resolve_page_preview_output(job, page_number, run_id)
         preview_source = load_page_preview_source(output_dir, page_number - 1)
         if preview_source is None:
             self._send_text("Page output not found.", status=HTTPStatus.NOT_FOUND)
             return
 
         page_model, _, _, _ = preview_source
-        if not page_has_visual_content(page_model):
-            self._send_text("This page does not contain supported visual content.", status=HTTPStatus.CONFLICT)
-            return
 
-        cached_record = load_visual_agent_cache_record(job, page_number, output_dir=output_dir)
+        cached_record = load_image_agent_cache_record(job, page_number, output_dir=output_dir)
         if cached_record is None:
             try:
-                record, _ = VISUAL_AGENT.generate_page_record(
+                record, _ = IMAGE_AGENT.generate_page_record(
                     page_model,
                     pdf_path=job.input_pdf,
                     source_name=job.original_filename,
+                    force=True,
                 )
             except Exception as exc:
-                self._send_text(f"Visual Agent failed: {exc}", status=HTTPStatus.BAD_GATEWAY)
+                self._send_text(f"Image Agent failed: {exc}", status=HTTPStatus.BAD_GATEWAY)
                 return
             record["generated_at"] = utc_now()
-            save_visual_agent_cache_record(job, page_number, record)
+            save_image_agent_cache_record(job, page_number, record)
             cached_record = record
 
         self._send_json(
             {
                 "page_number": page_number,
-                "run_id": run_id,
-                **extract_visual_agent_preview(page_model, cached_record),
+                "run_id": resolved_run_id,
+                **extract_image_agent_preview(page_model, cached_record),
             }
         )
 
@@ -2110,6 +2180,26 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _serve_merged_output_bundle(self, job: JobRecord) -> None:
+        bundle = build_merged_output_bundle(job)
+        if bundle is None:
+            self.send_error(HTTPStatus.NOT_FOUND, "Output not found")
+            return
+        data, filename = bundle
+        encoded_filename = quote(filename)
+
+        self.send_response(HTTPStatus.OK)
+        self._send_common_headers()
+        self.send_header("Content-Type", "application/zip")
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="pdf-extraction-output.zip"; filename*=UTF-8\'\'{encoded_filename}',
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _serve_artifact_path(self, artifact: Path, name: str) -> None:
         data = artifact.read_bytes()
         self.send_response(HTTPStatus.OK)
@@ -2143,21 +2233,22 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
             "block_types": {},
             "page_markdown": "",
             "page_ir": None,
-            "visual_content_detected": False,
-            "visual_hint": None,
-            "visual_alt_text": None,
-            "visual_interpretation_markdown": None,
-            "visual_agent_language": None,
-            "visual_agent_kind": None,
-            "visual_agent_generated": False,
-            "visual_agent_empty": False,
+            "image_content_detected": False,
+            "image_hint": None,
+            "image_alt_text": None,
+            "image_interpretation_markdown": None,
+            "image_agent_language": None,
+            "image_agent_kind": None,
+            "image_agent_generated": False,
+            "image_agent_empty": False,
         }
-        output_dir = resolve_output_dir(job, run_id)
+        output_dir, resolved_run_id = resolve_page_preview_output(job, page_number, run_id)
+        payload["run_id"] = resolved_run_id
         preview_source = load_page_preview_source(output_dir, page_index)
         if preview_source is not None:
             page_model, block_types, source_engine, page_ir = preview_source
-            page_model = apply_local_visual_fallback(job, output_dir, page_number, page_model)
-            cached_record = load_visual_agent_cache_record(job, page_number, output_dir=output_dir)
+            page_model = apply_local_image_fallback(job, output_dir, page_number, page_model)
+            cached_record = load_image_agent_cache_record(job, page_number, output_dir=output_dir)
             payload.update(
                 {
                     "in_document_ir": True,
@@ -2166,13 +2257,13 @@ class ProductRequestHandler(BaseHTTPRequestHandler):
                     "source_engine": source_engine,
                     "page_markdown": page_to_preview_markdown(page_model),
                     "page_ir": page_model_to_payload(page_model),
-                    "visual_content_detected": page_has_visual_content(page_model),
-                    "visual_hint": (
-                        "This page is mainly visual. Use the original page as the primary reference."
-                        if page_has_visual_content(page_model)
+                    "image_content_detected": page_has_image_content(page_model),
+                    "image_hint": (
+                        "This page is mainly image-based. Use the original page as the primary reference."
+                        if page_has_image_content(page_model)
                         else None
                     ),
-                    **extract_visual_agent_preview(page_model, cached_record),
+                    **extract_image_agent_preview(page_model, cached_record),
                 }
             )
         self._send_json(payload)

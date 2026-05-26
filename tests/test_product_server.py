@@ -1,13 +1,19 @@
+import io
+import json
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from backend.product_server import JobRecord
-from backend.product_server import VISUAL_AGENT_CACHE_VERSION
+from backend.product_server import IMAGE_AGENT_CACHE_VERSION
 from backend.product_server import _looks_like_bad_reliable_override
 from backend.product_server import _parse_multipart_form_data
+from backend.product_server import build_merged_output
+from backend.product_server import build_merged_output_bundle
 from backend.product_server import ensure_run_allowed
-from backend.product_server import load_visual_agent_cache_record
+from backend.product_server import load_image_agent_cache_record
+from backend.product_server import resolve_page_preview_output
 from backend.types import Block
 from backend.types import Page
 
@@ -33,6 +39,34 @@ def _make_job(tmp_path: Path) -> JobRecord:
     )
 
 
+def _write_document_ir(output_dir: Path, page_text_by_number: dict[int, str]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pages = []
+    for page_number, text in sorted(page_text_by_number.items()):
+        page_index = page_number - 1
+        pages.append(
+            {
+                "page_index": page_index,
+                "blocks": [
+                    {
+                        "id": f"p{page_number}_text",
+                        "type": "text",
+                        "text": text,
+                        "page_index": page_index,
+                        "order": 0,
+                    }
+                ],
+            }
+        )
+    payload = {
+        "doc_id": "demo",
+        "source_file": "demo.pdf",
+        "source_engine": "test",
+        "pages": pages,
+    }
+    (output_dir / "document_ir.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_ensure_run_allowed_rejects_repeat_fast(monkeypatch, tmp_path: Path) -> None:
     job = _make_job(tmp_path)
 
@@ -55,23 +89,23 @@ def test_ensure_run_allowed_rejects_unavailable_or_repeat_repair(monkeypatch, tm
         ensure_run_allowed(job, [2], "reliable")
 
 
-def test_load_visual_agent_cache_record_migrates_legacy_run_cache(tmp_path: Path) -> None:
+def test_load_image_agent_cache_record_migrates_legacy_run_cache(tmp_path: Path) -> None:
     job = _make_job(tmp_path)
     legacy_output_dir = job.job_dir / "runs" / "run_demo_fast_abc123" / "output"
     legacy_output_dir.mkdir(parents=True, exist_ok=True)
-    legacy_cache_path = legacy_output_dir / "visual_agent_cache.json"
+    legacy_cache_path = legacy_output_dir / "image_agent_cache.json"
     legacy_cache_path.write_text(
         (
             "{\n"
-            f'  "version": {VISUAL_AGENT_CACHE_VERSION},\n'
+            f'  "version": {IMAGE_AGENT_CACHE_VERSION},\n'
             '  "pages": {\n'
             '    "3": {\n'
             '      "generated": true,\n'
-            '      "has_meaningful_visual": true,\n'
+            '      "has_meaningful_image": true,\n'
             '      "summary": "Legacy summary",\n'
             '      "markdown": "Legacy markdown",\n'
             '      "language": "en",\n'
-            '      "visual_kind": "diagram"\n'
+            '      "image_kind": "diagram"\n'
             "    }\n"
             "  }\n"
             "}\n"
@@ -79,12 +113,12 @@ def test_load_visual_agent_cache_record_migrates_legacy_run_cache(tmp_path: Path
         encoding="utf-8",
     )
 
-    record = load_visual_agent_cache_record(job, 3, output_dir=legacy_output_dir)
+    record = load_image_agent_cache_record(job, 3, output_dir=legacy_output_dir)
 
     assert record is not None
     assert record["summary"] == "Legacy summary"
 
-    migrated_cache = job.job_dir / "visual_agent_cache.json"
+    migrated_cache = job.job_dir / "image_agent_cache.json"
     assert migrated_cache.exists()
     assert '"3"' in migrated_cache.read_text(encoding="utf-8")
 
@@ -107,6 +141,203 @@ def test_parse_multipart_form_data_reads_file_and_fields() -> None:
 
     assert fields["replaces_job_id"] == "job_old"
     assert files["file"] == ("demo.pdf", b"%PDF-1.4\n")
+
+
+def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    merged_ir = {
+        "doc_id": "demo",
+        "source_file": "demo.pdf",
+        "pages": [
+            {
+                "page_index": 0,
+                "blocks": [
+                    {
+                        "id": "p1_text",
+                        "type": "text",
+                        "text": "Hello output",
+                        "page_index": 0,
+                        "order": 0,
+                    }
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "backend.product_server.build_merged_output",
+        lambda current_job: (merged_ir, "Hello output") if current_job is job else None,
+    )
+
+    bundle = build_merged_output_bundle(job)
+
+    assert bundle is not None
+    data, filename = bundle
+    assert filename == "demo_output.zip"
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = set(archive.namelist())
+        assert {"document.md", "document_ir.json", "metadata.json", "pages/page_0001.md"} <= names
+        assert archive.read("document.md").decode("utf-8") == "Hello output"
+        metadata = json.loads(archive.read("metadata.json").decode("utf-8"))
+        assert metadata["output_pages"] == [1]
+
+
+def test_merged_output_uses_only_requested_repair_page(monkeypatch, tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    fast_output_dir = tmp_path / "fast" / "output"
+    repair_output_dir = tmp_path / "repair" / "output"
+    _write_document_ir(
+        fast_output_dir,
+        {
+            1: "FAST P1",
+            2: "FAST P2",
+            3: "FAST P3",
+            4: "FAST P4",
+        },
+    )
+    _write_document_ir(
+        repair_output_dir,
+        {
+            2: "REPAIRED P2",
+            3: "CONTEXT P3 SHOULD NOT ENTER FINAL OUTPUT",
+        },
+    )
+
+    monkeypatch.setattr(
+        "backend.product_server.completed_history_entries",
+        lambda current_job: [
+            {
+                "run_id": "run_reliable",
+                "run_mode": "reliable",
+                "status": "completed",
+                "selection_mode": "pagerange",
+                "selection": "2",
+                "output_dir": str(repair_output_dir),
+            },
+            {
+                "run_id": "run_fast",
+                "run_mode": "fast",
+                "status": "completed",
+                "selection_mode": "all",
+                "selection": None,
+                "output_dir": str(fast_output_dir),
+            },
+        ],
+    )
+
+    merged = build_merged_output(job)
+
+    assert merged is not None
+    merged_ir, merged_markdown = merged
+    assert [page["page_index"] for page in merged_ir["pages"]] == [0, 1, 2, 3]
+    assert "## Page 1" in merged_markdown
+    assert "## Page 2" in merged_markdown
+    assert "## Page 3" in merged_markdown
+    assert "REPAIRED P2" in merged_markdown
+    assert "FAST P3" in merged_markdown
+    assert "CONTEXT P3 SHOULD NOT ENTER FINAL OUTPUT" not in merged_markdown
+
+
+def test_merged_output_keeps_adjacent_table_pages_separate(monkeypatch, tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    output_dir = tmp_path / "fast_tables" / "output"
+    payload = {
+        "doc_id": "demo",
+        "source_file": "demo.pdf",
+        "source_engine": "test",
+        "pages": [
+            {
+                "page_index": 0,
+                "blocks": [
+                    {
+                        "id": "p1_table",
+                        "type": "table",
+                        "text": "<table><tr><td>first page table</td></tr></table>",
+                        "page_index": 0,
+                        "order": 0,
+                    }
+                ],
+            },
+            {
+                "page_index": 1,
+                "blocks": [
+                    {
+                        "id": "p2_table",
+                        "type": "table",
+                        "text": "<table><tr><td>second page table</td></tr></table>",
+                        "page_index": 1,
+                        "order": 0,
+                    }
+                ],
+            },
+        ],
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "document_ir.json").write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "backend.product_server.completed_history_entries",
+        lambda current_job: [
+            {
+                "run_id": "run_fast",
+                "run_mode": "fast",
+                "status": "completed",
+                "selection_mode": "pagerange",
+                "selection": "1-2",
+                "output_dir": str(output_dir),
+            },
+        ],
+    )
+
+    merged = build_merged_output(job)
+
+    assert merged is not None
+    _, merged_markdown = merged
+    assert (
+        "<table><tr><td>first page table</td></tr></table>\n\n"
+        "## Page 2\n\n"
+        "<table><tr><td>second page table</td></tr></table>"
+    ) in merged_markdown
+
+
+def test_page_preview_without_run_id_uses_effective_page_run(monkeypatch, tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    job.output_dir = str(tmp_path / "last_repair" / "output")
+    job.run_id = "run_last_repair"
+    fast_output_dir = tmp_path / "fast" / "output"
+    repair_output_dir = tmp_path / "repair" / "output"
+    _write_document_ir(fast_output_dir, {1: "FAST P1", 2: "FAST P2"})
+    _write_document_ir(repair_output_dir, {1: "REPAIRED P1"})
+
+    monkeypatch.setattr(
+        "backend.product_server.completed_history_entries",
+        lambda current_job: [
+            {
+                "run_id": "run_reliable_p1",
+                "run_mode": "reliable",
+                "status": "completed",
+                "selection_mode": "pagerange",
+                "selection": "1",
+                "output_dir": str(repair_output_dir),
+            },
+            {
+                "run_id": "run_fast",
+                "run_mode": "fast",
+                "status": "completed",
+                "selection_mode": "pagerange",
+                "selection": "1-2",
+                "output_dir": str(fast_output_dir),
+            },
+        ],
+    )
+
+    output_dir, run_id = resolve_page_preview_output(job, 1)
+
+    assert output_dir == repair_output_dir
+    assert run_id == "run_reliable_p1"
+
+    output_dir, run_id = resolve_page_preview_output(job, 2)
+
+    assert output_dir == fast_output_dir
+    assert run_id == "run_fast"
 
 
 def test_bad_reliable_override_is_detected_for_single_giant_table_page() -> None:

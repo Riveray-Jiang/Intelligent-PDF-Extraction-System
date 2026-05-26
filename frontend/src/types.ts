@@ -1,13 +1,13 @@
-export type SelectionMode = 'all' | 'outline' | 'pagerange'
+﻿export type SelectionMode = 'all' | 'outline' | 'pagerange'
 export type RunMode = 'fast' | 'reliable'
 
-export type VisualAgentSnapshot = {
+export type ImageAgentSnapshot = {
   enabled: boolean
   name?: string | null
   model?: string | null
-  visual_pages_detected?: number | null
-  visual_pages_enriched?: number | null
-  visual_pages_failed?: number | null
+  image_pages_detected?: number | null
+  image_pages_enriched?: number | null
+  image_pages_failed?: number | null
 }
 
 export type SessionPage = {
@@ -41,7 +41,7 @@ export type JobSnapshot = {
   cancel_requested?: boolean
   cascade_attempt?: number | null
   failed_pages_count?: number | null
-  visual_agent?: VisualAgentSnapshot | null
+  image_agent?: ImageAgentSnapshot | null
   engines?: {
     primary?: string
     fallback?: string
@@ -75,14 +75,14 @@ export type PagePreview = {
   source_engine?: string
   page_markdown?: string
   page_ir?: Record<string, unknown> | null
-  visual_content_detected?: boolean
-  visual_hint?: string | null
-  visual_alt_text?: string | null
-  visual_interpretation_markdown?: string | null
-  visual_agent_language?: string | null
-  visual_agent_kind?: string | null
-  visual_agent_generated?: boolean
-  visual_agent_empty?: boolean
+  image_content_detected?: boolean
+  image_hint?: string | null
+  image_alt_text?: string | null
+  image_interpretation_markdown?: string | null
+  image_agent_language?: string | null
+  image_agent_kind?: string | null
+  image_agent_generated?: boolean
+  image_agent_empty?: boolean
 }
 
 export type RunHistoryEntry = {
@@ -103,7 +103,7 @@ export type RunHistoryEntry = {
   duration_sec?: number | null
   failed_pages_count?: number | null
   cascade_attempt?: number | null
-  visual_agent?: VisualAgentSnapshot | null
+  image_agent?: ImageAgentSnapshot | null
   engine_config?: string | null
   repair_engine_version?: string | null
   artifact_urls: Record<string, string>

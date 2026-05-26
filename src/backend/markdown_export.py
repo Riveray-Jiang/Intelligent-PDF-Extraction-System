@@ -44,6 +44,11 @@ def _source_text_list(block: Block, key: str) -> list[str]:
     return []
 
 
+def _has_table_shell_evidence(block: Block) -> bool:
+    raw = _source_raw(block)
+    return bool(block.bbox or raw.get("bbox") or raw.get("img_path") or raw.get("table_caption"))
+
+
 def _render_hard_break_lines(text: str) -> str:
     paragraphs: list[str] = []
     current_lines: list[str] = []
@@ -144,6 +149,9 @@ def _render_block(block: Block) -> str:
         return f"**{text}**"
     if block_type == "table":
         if not text:
+            if _has_table_shell_evidence(block):
+                captions = [f"**{caption}**" for caption in _source_text_list(block, "table_caption")]
+                return "\n\n".join([*captions, "> [Table detected]"])
             return ""
         pieces: list[str] = []
         pieces.extend(f"**{caption}**" for caption in _source_text_list(block, "table_caption"))
@@ -160,16 +168,16 @@ def _render_block(block: Block) -> str:
         fallback_markdown = str(source.get("fallback_extracted_markdown") or "").strip()
         if fallback_markdown:
             return fallback_markdown
-        return "> [Visual content present]"
-    if block_type == "visual_interpretation":
+        return "> [Image content present]"
+    if block_type == "image_interpretation":
         if not text:
             return ""
         language = ""
         if isinstance(block.source, dict):
             language = str(block.source.get("language", "")).strip().lower()
-        title = "Visual Agent interpretation"
+        title = "Image Agent interpretation"
         if language.startswith("zh"):
-            title = "Visual Agent \u89e3\u8bfb"
+            title = "Image Agent \u89e3\u8bfb"
         quote_lines = [f"> **{title}**", ">"]
         for line in text.splitlines():
             stripped = line.rstrip()
@@ -256,7 +264,7 @@ def _preview_blocks(page: Page) -> list[Block]:
     filtered: list[Block] = []
     for block in _sorted_blocks(page.blocks):
         block_type = block.type.lower()
-        if block_type in {"header", "footer", "discarded", "visual_interpretation"}:
+        if block_type in {"header", "footer", "discarded", "image_interpretation"}:
             continue
         if _is_edge_number_block(block, page):
             continue

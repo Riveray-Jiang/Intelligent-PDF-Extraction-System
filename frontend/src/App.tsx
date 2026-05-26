@@ -62,7 +62,7 @@ type ViewerRepairTask = {
   startedAt: number
 }
 
-type ArtifactVisualAgentMeta = {
+type ArtifactImageAgentMeta = {
   kind: string | null
   language: string | null
   altText: string | null
@@ -277,11 +277,11 @@ function getRunModeLabel(mode: RunMode | null | undefined) {
   return mode === 'reliable' ? 'Repair' : 'Run'
 }
 
-function readArtifactVisualAgentMeta(preview: PagePreview | null | undefined): ArtifactVisualAgentMeta | null {
-  const kind = preview?.visual_agent_kind?.trim() || null
-  const language = preview?.visual_agent_language?.trim().toLowerCase() || null
-  const altText = preview?.visual_alt_text?.trim() || null
-  const interpretationMarkdown = preview?.visual_interpretation_markdown?.trim() || null
+function readArtifactImageAgentMeta(preview: PagePreview | null | undefined): ArtifactImageAgentMeta | null {
+  const kind = preview?.image_agent_kind?.trim() || null
+  const language = preview?.image_agent_language?.trim().toLowerCase() || null
+  const altText = preview?.image_alt_text?.trim() || null
+  const interpretationMarkdown = preview?.image_interpretation_markdown?.trim() || null
   if (!altText && !interpretationMarkdown) return null
 
   return {
@@ -549,7 +549,7 @@ function Brand({ onHome }: { onHome?: () => void }) {
   )
 }
 
-function VisualAgentMark({ compact = false }: { compact?: boolean }) {
+function ImageAgentMark({ compact = false }: { compact?: boolean }) {
   return (
     <span
       className={cn(
@@ -560,7 +560,7 @@ function VisualAgentMark({ compact = false }: { compact?: boolean }) {
       <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[linear-gradient(180deg,#eef7d0,#dce9a0)] text-[color:var(--theme-primary-strong)] shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_6px_16px_rgba(0,77,64,0.12)]">
         <Brain className="h-3 w-3" strokeWidth={2.2} />
       </span>
-      {!compact && <span className="text-[11px] font-semibold tracking-[-0.01em]">Visual Agent</span>}
+      {!compact && <span className="text-[11px] font-semibold tracking-[-0.01em]">Image Agent</span>}
     </span>
   )
 }
@@ -724,9 +724,9 @@ export default function App() {
   const [artifactImageRotation, setArtifactImageRotation] = useState(0)
   const [artifactImageNaturalSize, setArtifactImageNaturalSize] = useState<ImageSize | null>(null)
   const [artifactImageViewportSize, setArtifactImageViewportSize] = useState<ImageSize | null>(null)
-  const [artifactVisualAgentLoading, setArtifactVisualAgentLoading] = useState(false)
-  const [artifactVisualAgentError, setArtifactVisualAgentError] = useState<string | null>(null)
-  const [artifactVisualAgentPanelOpen, setArtifactVisualAgentPanelOpen] = useState(false)
+  const [artifactImageAgentLoading, setArtifactImageAgentLoading] = useState(false)
+  const [artifactImageAgentError, setArtifactImageAgentError] = useState<string | null>(null)
+  const [artifactImageAgentPanelOpen, setArtifactImageAgentPanelOpen] = useState(false)
   const [copiedSurface, setCopiedSurface] = useState<string | null>(null)
   const [cancelingRun, setCancelingRun] = useState(false)
   const [, setElapsedTick] = useState(0)
@@ -920,9 +920,9 @@ export default function App() {
       setArtifactImageRotation(0)
       setArtifactImageNaturalSize(null)
       setArtifactImageViewportSize(null)
-      setArtifactVisualAgentLoading(false)
-      setArtifactVisualAgentError(null)
-      setArtifactVisualAgentPanelOpen(false)
+      setArtifactImageAgentLoading(false)
+      setArtifactImageAgentError(null)
+      setArtifactImageAgentPanelOpen(false)
       return
     }
     setRepairActionError(null)
@@ -931,9 +931,9 @@ export default function App() {
     setArtifactPageRunOverrides({})
     setArtifactImageRotation(0)
     setArtifactImageNaturalSize(null)
-    setArtifactVisualAgentLoading(false)
-    setArtifactVisualAgentError(null)
-    setArtifactVisualAgentPanelOpen(false)
+    setArtifactImageAgentLoading(false)
+    setArtifactImageAgentError(null)
+    setArtifactImageAgentPanelOpen(false)
     lastRepairRefreshRunIdRef.current = null
     setArtifactViewMode(artifactViewer.initialTab ?? (artifactViewer.markdownHref ? 'markdown' : 'json'))
     setArtifactPage(artifactViewer.initialPage ?? artifactViewer.pageNumbers[0] ?? 1)
@@ -966,8 +966,8 @@ export default function App() {
       )
       setArtifactPreviewData(null)
       setArtifactPreviewError(null)
-      setArtifactVisualAgentError(null)
-      setArtifactVisualAgentPanelOpen(false)
+      setArtifactImageAgentError(null)
+      setArtifactImageAgentPanelOpen(false)
       setArtifactLoading(true)
       setHistoryRefreshKey((value) => value + 1)
       return
@@ -1133,9 +1133,9 @@ export default function App() {
   }, [artifactPage, artifactPageRunOverrides, artifactViewer, jobId])
 
   useEffect(() => {
-    setArtifactVisualAgentLoading(false)
-    setArtifactVisualAgentError(null)
-    setArtifactVisualAgentPanelOpen(false)
+    setArtifactImageAgentLoading(false)
+    setArtifactImageAgentError(null)
+    setArtifactImageAgentPanelOpen(false)
   }, [artifactPage])
 
   useEffect(() => {
@@ -1153,27 +1153,30 @@ export default function App() {
     () => (artifactPreviewData?.page_ir ? JSON.stringify(artifactPreviewData.page_ir, null, 2) : ''),
     [artifactPreviewData?.page_ir],
   )
-  const artifactVisualAgent = useMemo(() => readArtifactVisualAgentMeta(artifactPreviewData), [artifactPreviewData])
-  const artifactHasVisualAgentAction = Boolean(
-    artifactPreviewData?.visual_content_detected ||
-      artifactVisualAgent ||
-      artifactVisualAgentError ||
-      artifactVisualAgentLoading ||
-      artifactPreviewData?.visual_agent_empty,
+  const imageAgentEnabled = Boolean(job?.image_agent?.enabled)
+  const artifactImageAgent = useMemo(() => readArtifactImageAgentMeta(artifactPreviewData), [artifactPreviewData])
+  const artifactHasImageAgentAction = Boolean(
+    imageAgentEnabled ||
+      artifactPreviewData?.image_content_detected ||
+      artifactImageAgent ||
+      artifactImageAgentError ||
+      artifactImageAgentLoading ||
+      artifactPreviewData?.image_agent_empty,
   )
   const artifactCopyText = useMemo(
     () =>
-      artifactVisualAgentPanelOpen
-        ? artifactVisualAgent?.interpretationMarkdown || artifactVisualAgent?.altText || ''
+      artifactImageAgentPanelOpen
+        ? artifactImageAgent?.interpretationMarkdown || artifactImageAgent?.altText || ''
         : artifactViewMode === 'json'
         ? artifactPreviewJsonText
         : artifactPreviewData?.page_markdown?.trim() || '',
-    [artifactPreviewData?.page_markdown, artifactPreviewJsonText, artifactViewMode, artifactVisualAgent, artifactVisualAgentPanelOpen],
+    [artifactPreviewData?.page_markdown, artifactPreviewJsonText, artifactViewMode, artifactImageAgent, artifactImageAgentPanelOpen],
   )
   const artifactHasMarkdown = Boolean(artifactViewer)
   const artifactHasJson = Boolean(artifactViewer)
-  const artifactCurrentHref =
-    artifactViewMode === 'json' ? artifactViewer?.jsonHref : artifactViewer?.markdownHref
+  const artifactDownloadHref = artifactViewer
+    ? apiUrl(`/api/jobs/${artifactViewer.sourceJobId ?? jobId}/download-output.zip`)
+    : null
   const artifactSourcePages = artifactViewer?.pageNumbers ?? []
   const artifactNavigationPages = artifactViewer?.navigationPageNumbers ?? artifactSourcePages
   const artifactPageCursor = artifactPage !== null ? artifactNavigationPages.indexOf(artifactPage) : -1
@@ -1231,7 +1234,6 @@ export default function App() {
     () => describeRunSelection(job?.selection_mode, job?.selection, session?.page_count),
     [job?.selection, job?.selection_mode, session?.page_count],
   )
-  const visualAgentEnabled = Boolean(job?.visual_agent?.enabled)
   const completedHistoryEntries = useMemo(
     () => runHistory.filter((entry) => entry.status === 'completed' && runHistoryHasArtifacts(entry)),
     [runHistory],
@@ -1336,9 +1338,9 @@ export default function App() {
     if (latestOutputDurationLabel) items.push(`Run ${latestOutputDurationLabel}`)
     const repairedCount = latestOutputPages.filter((pageNumber) => repairedPageSet.has(pageNumber)).length
     if (repairedCount > 0) items.push(`${repairedCount} repaired`)
-    if (visualAgentEnabled) items.push('Visual Agent')
+    if (imageAgentEnabled) items.push('Image Agent')
     return items
-  }, [latestOutputDurationLabel, latestOutputPages, latestWholeDocumentRun, repairedPageSet, session, visualAgentEnabled])
+  }, [latestOutputDurationLabel, latestOutputPages, latestWholeDocumentRun, repairedPageSet, session, imageAgentEnabled])
   const currentFileVersion = useMemo(
     () => fileHistory?.versions.find((version) => version.is_current) ?? null,
     [fileHistory],
@@ -1811,16 +1813,16 @@ export default function App() {
     }
   }
 
-  async function handleGenerateVisualAgent(pageNumber: number) {
+  async function handleGenerateImageAgent(pageNumber: number) {
     const previewJobId = artifactViewer?.sourceJobId ?? jobId
     if (!previewJobId || !artifactViewer || !pageNumber) return
 
     const pageRunId = artifactViewer.pageRunIds?.[pageNumber] ?? artifactViewer.runId ?? null
 
     try {
-      setArtifactVisualAgentLoading(true)
-      setArtifactVisualAgentError(null)
-      const response = await fetch(apiUrl(`/api/jobs/${previewJobId}/visual-agent`), {
+      setArtifactImageAgentLoading(true)
+      setArtifactImageAgentError(null)
+      const response = await fetch(apiUrl(`/api/jobs/${previewJobId}/image-agent`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1829,30 +1831,30 @@ export default function App() {
         }),
       })
       if (!response.ok) {
-        throw new Error(await readResponseErrorMessage(response, 'Visual Agent could not interpret this page.'))
+        throw new Error(await readResponseErrorMessage(response, 'Image Agent could not interpret this page.'))
       }
       const payload = (await response.json()) as Partial<PagePreview>
       setArtifactPreviewData((current) => (current ? { ...current, ...payload } : (payload as PagePreview)))
       launchCompletionCelebration()
     } catch (caught) {
-      setArtifactVisualAgentError(
-        caught instanceof Error ? caught.message : 'Visual Agent could not interpret this page.',
+      setArtifactImageAgentError(
+        caught instanceof Error ? caught.message : 'Image Agent could not interpret this page.',
       )
     } finally {
-      setArtifactVisualAgentLoading(false)
+      setArtifactImageAgentLoading(false)
     }
   }
 
-  function openArtifactVisualAgentPanel() {
-    setArtifactVisualAgentPanelOpen(true)
+  function openArtifactImageAgentPanel() {
+    setArtifactImageAgentPanelOpen(true)
     if (
-      !artifactVisualAgent &&
-      !artifactVisualAgentLoading &&
-      !artifactPreviewData?.visual_agent_empty &&
-      artifactPreviewData?.visual_content_detected &&
+      !artifactImageAgent &&
+      !artifactImageAgentLoading &&
+      !artifactPreviewData?.image_agent_empty &&
+      imageAgentEnabled &&
       artifactPage !== null
     ) {
-      void handleGenerateVisualAgent(artifactPage)
+      void handleGenerateImageAgent(artifactPage)
     }
   }
 
@@ -1917,8 +1919,8 @@ export default function App() {
     setArtifactPage(null)
     setArtifactPreviewData(null)
     setArtifactPreviewError(null)
-    setArtifactVisualAgentError(null)
-    setArtifactVisualAgentPanelOpen(false)
+    setArtifactImageAgentError(null)
+    setArtifactImageAgentPanelOpen(false)
     setUploadError(null)
     setLoadError(null)
     setExpandedWorkflowStep(1)
@@ -2909,29 +2911,28 @@ export default function App() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          {artifactHasVisualAgentAction && (
+                          {artifactHasImageAgentAction && (
                             <button
                               type="button"
-                              onClick={() => openArtifactVisualAgentPanel()}
+                              onClick={() => openArtifactImageAgentPanel()}
                               className="inline-flex items-center gap-2 rounded-full border border-[color:var(--theme-primary)]/18 bg-[color:var(--theme-primary)]/[0.05] px-3 py-1.5 text-xs font-semibold text-[color:var(--theme-primary)] transition hover:border-[color:var(--theme-primary)]/30 hover:bg-[color:var(--theme-primary)]/[0.08]"
                             >
-                              {artifactVisualAgentLoading ? (
+                              {artifactImageAgentLoading ? (
                                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                               ) : (
                                 <Brain className="h-3.5 w-3.5" />
                               )}
-                              Visual Agent
+                              Image Agent
                             </button>
                           )}
-                          {artifactCurrentHref && (
+                          {artifactDownloadHref && (
                             <a
-                              href={artifactCurrentHref}
-                              target="_blank"
-                              rel="noreferrer"
+                              href={artifactDownloadHref}
+                              download
                               className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[color:var(--theme-primary)]/25 hover:text-[color:var(--theme-primary)]"
                             >
                               <Download className="h-3.5 w-3.5" />
-                              {artifactViewMode === 'json' ? 'View full JSON' : 'View full document'}
+                              Download output
                             </a>
                           )}
                           <button
@@ -2959,7 +2960,7 @@ export default function App() {
                           <div
                             className={cn(
                               'flex h-full min-h-0 flex-col px-5 py-4 transition',
-                              artifactVisualAgentPanelOpen ? 'scale-[0.995] opacity-40 blur-[1px]' : '',
+                              artifactImageAgentPanelOpen ? 'scale-[0.995] opacity-40 blur-[1px]' : '',
                             )}
                           >
                             <div className="mb-4 flex items-center justify-between gap-3">
@@ -2985,16 +2986,16 @@ export default function App() {
                             </div>
                           </div>
 
-                          {artifactVisualAgentPanelOpen && (
+                          {artifactImageAgentPanelOpen && (
                             <div className="absolute inset-3 z-10 flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-[color:var(--theme-secondary)]/34 bg-white shadow-[0_22px_50px_rgba(15,23,42,0.18)]">
                               <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
                                 <div className="flex min-w-0 items-center gap-3">
-                                  <VisualAgentMark compact />
-                                  <div className="min-w-0 text-sm font-semibold text-slate-900">Visual Agent</div>
+                                  <ImageAgentMark compact />
+                                  <div className="min-w-0 text-sm font-semibold text-slate-900">Image Agent</div>
                                 </div>
                                 <button
                                   type="button"
-                                  onClick={() => setArtifactVisualAgentPanelOpen(false)}
+                                  onClick={() => setArtifactImageAgentPanelOpen(false)}
                                   className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
                                 >
                                   <X className="h-4 w-4" />
@@ -3002,30 +3003,30 @@ export default function App() {
                               </div>
 
                               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-                                {artifactVisualAgentLoading ? (
+                                {artifactImageAgentLoading ? (
                                   <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-3 text-center text-slate-500">
                                     <LoaderCircle className="h-5 w-5 animate-spin text-[color:var(--theme-primary)]" />
                                     <div className="text-sm font-medium text-slate-700">Generating AI reading</div>
                                   </div>
-                                ) : artifactVisualAgentError ? (
+                                ) : artifactImageAgentError ? (
                                   <div className="rounded-[18px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                                    {artifactVisualAgentError}
+                                    {artifactImageAgentError}
                                   </div>
-                                ) : artifactVisualAgent?.interpretationMarkdown || artifactVisualAgent?.altText ? (
+                                ) : artifactImageAgent?.interpretationMarkdown || artifactImageAgent?.altText ? (
                                   <div className="markdown-surface text-[15px] leading-7">
                                     <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeRaw, rehypeKatex]}>
-                                      {artifactVisualAgent?.interpretationMarkdown || artifactVisualAgent?.altText || ''}
+                                      {artifactImageAgent?.interpretationMarkdown || artifactImageAgent?.altText || ''}
                                     </ReactMarkdown>
                                   </div>
-                                ) : artifactPreviewData?.visual_agent_empty ? (
+                                ) : artifactPreviewData?.image_agent_empty ? (
                                   <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-700">
-                                    Visual Agent did not find extra visual meaning beyond the original page and caption.
+                                    Image checked. No extra structure found.
                                   </div>
-                                ) : artifactPreviewData?.visual_content_detected && visualAgentEnabled ? (
+                                ) : imageAgentEnabled ? (
                                   <button
                                     type="button"
-                                    onClick={() => artifactPage !== null && void handleGenerateVisualAgent(artifactPage)}
-                                    disabled={artifactVisualAgentLoading || artifactPage === null}
+                                    onClick={() => artifactPage !== null && void handleGenerateImageAgent(artifactPage)}
+                                    disabled={artifactImageAgentLoading || artifactPage === null}
                                     className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-4 text-left transition hover:border-[color:var(--theme-primary)]/22 hover:bg-white disabled:cursor-not-allowed disabled:opacity-55"
                                   >
                                     <div className="flex min-w-0 items-center gap-3">

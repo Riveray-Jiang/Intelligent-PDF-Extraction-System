@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/assets/logo.svg" alt="PDF Extraction logo" width="72">
 </p>
 
@@ -11,11 +11,11 @@ A local PDF extraction product for turning PDFs into structured JSON, Markdown, 
 ## What It Does
 - Upload a PDF and create a persisted job workspace.
 - Select extraction scope by all pages, outline sections, or manual page range.
-- Run a multi-agent pipeline: ingest -> select -> parse -> build IR -> enrich visuals -> validate.
+- Run a multi-agent pipeline: ingest -> select -> parse -> build IR -> enrich images -> validate.
 - Use MinerU as the production parser and PaddleOCR-VL as a fallback/repair path.
 - Export `document_ir.json`, `document.md`, `validation_report.json`, and `pipeline_state.json`.
 - Inspect page previews, run history, merged outputs, and per-page repair results in the frontend.
-- Optionally enable Visual Agent interpretation for visual-heavy pages with `OPENAI_API_KEY`.
+- Optionally enable Image Agent interpretation for image-heavy pages with `OPENAI_API_KEY`.
 - Run benchmark manifests to compare parser speed and quality.
 
 ## Quick Start
@@ -70,14 +70,14 @@ The frontend defaults to `http://127.0.0.1:8892`. Override it with `frontend/.en
 VITE_BACKEND_URL=http://127.0.0.1:8892
 ```
 
-## Optional Visual Agent
+## Optional Image Agent
 
 Create `.env` from `.env.example` and set:
 ```text
 OPENAI_API_KEY=<your key>
 ```
 
-When enabled, Visual Agent can interpret maps, figures, diagrams, charts, stamps, forms, and other visual-heavy PDF pages that ordinary text extraction does not fully expose.
+When enabled, Image Agent can interpret maps, figures, diagrams, charts, stamps, forms, and other image-heavy PDF pages that ordinary text extraction does not fully expose.
 
 ## Product Flow
 1. Open the frontend.

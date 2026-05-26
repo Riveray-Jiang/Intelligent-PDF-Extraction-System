@@ -94,3 +94,92 @@ def test_invoke_mineru_parse_uses_fastapi_compatible_multipart(tmp_path, monkeyp
     assert captured["data"]["lang_list"] == ["ch"]
     assert isinstance(captured["files"], list)
     assert captured["files"][0][0] == "files"
+
+
+def test_prewarm_from_config_runs_real_parse_for_mineru_api(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "engines.yaml"
+    config_path.write_text(
+        """
+engines:
+  mineru:
+    image: pdf-agent/mineru-runner:0.1.0
+    runtime: docker_service
+    service:
+      type: mineru_api
+      host: 127.0.0.1
+      port: 19100
+      container_name: pdf-agent-mineru-api
+    retry_profiles:
+      - name: pipeline_gpu_auto
+        backend: pipeline
+        lang: ch
+""",
+        encoding="utf-8",
+    )
+    manager = EngineServiceManager(project_root=tmp_path)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        manager,
+        "ensure_service",
+        lambda engine, engine_cfg, profile: {
+            "url": "http://127.0.0.1:19100",
+            "health_url": "http://127.0.0.1:19100/openapi.json",
+            "service_type": "mineru_api",
+        },
+    )
+
+    def fake_invoke_mineru_parse(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        return {"content_list": [{"type": "text", "content": "warmup"}]}
+
+    monkeypatch.setattr(manager, "invoke_mineru_parse", fake_invoke_mineru_parse)
+
+    warmed = manager.prewarm_from_config(config_path)
+
+    assert warmed == ["mineru:http://127.0.0.1:19100"]
+    assert captured["base_url"] == "http://127.0.0.1:19100"
+    assert captured["backend"] == "pipeline"
+    assert captured["lang_list"] == ["ch"]
+    assert captured["start_page_id"] == 0
+    assert captured["end_page_id"] == 0
+    assert Path(captured["pdf_path"]).exists()
+
+
+def test_prewarm_from_config_skips_parse_for_direct_vlm_worker(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "engines.yaml"
+    config_path.write_text(
+        """
+engines:
+  mineru:
+    image: pdf-agent/mineru-runner:0.1.0
+    runtime: docker_service
+    service:
+      type: mineru_direct_vlm_worker
+      host: 127.0.0.1
+      port: 19103
+      container_name: pdf-agent-mineru25-pro-repair
+    retry_profiles:
+      - name: mineru25_pro_direct
+        direct_vlm_model_id: opendatalab/MinerU2.5-Pro-2604-1.2B
+""",
+        encoding="utf-8",
+    )
+    manager = EngineServiceManager(project_root=tmp_path)
+
+    monkeypatch.setattr(
+        manager,
+        "ensure_service",
+        lambda engine, engine_cfg, profile: {
+            "url": "http://127.0.0.1:19103",
+            "health_url": "http://127.0.0.1:19103/health",
+            "service_type": "mineru_direct_vlm_worker",
+        },
+    )
+    monkeypatch.setattr(
+        manager,
+        "invoke_mineru_parse",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("direct worker should not use MinerU API parse")),
+    )
+
+    assert manager.prewarm_from_config(config_path) == ["mineru:http://127.0.0.1:19103"]

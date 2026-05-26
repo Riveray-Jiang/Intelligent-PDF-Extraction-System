@@ -542,7 +542,7 @@ def _aggregate_candidate_rows(doc_rows: list[dict[str, Any]]) -> list[dict[str, 
         complex_rows = [
             row
             for row in rows
-            if {"complex", "table", "formula", "visual", "badcase"} & {str(tag) for tag in row.get("tags", [])}
+            if {"complex", "table", "formula", "image", "badcase"} & {str(tag) for tag in row.get("tags", [])}
         ]
         native_rows = [row for row in rows if "native_text" in {str(tag) for tag in row.get("tags", [])}]
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -19,7 +19,7 @@ from .selection_agent import SelectionAgent
 from .types import DocumentIR
 from .types import ValidationReport
 from .validation_agent import ValidationAgent
-from .visual_agent import VisualAgent
+from .image_agent import ImageAgent
 
 
 class PipelineState(TypedDict, total=False):
@@ -50,7 +50,7 @@ class PipelineState(TypedDict, total=False):
     parsed: dict[str, Any]
     document_ir: DocumentIR
     updated_page_indices: list[int]
-    visual_agent: dict[str, Any]
+    image_agent: dict[str, Any]
     validation: ValidationReport
     performance: dict[str, Any]
 
@@ -62,7 +62,7 @@ PARSE_AGENT_MOCK = ParseAgent(allow_mock_output=True)
 PARSE_AGENT_CACHE: dict[tuple[str, bool], ParseAgent] = {}
 IR_BUILDER_AGENT = IRBuilderAgent()
 VALIDATION_AGENT = ValidationAgent()
-VISUAL_AGENT = VisualAgent()
+IMAGE_AGENT = ImageAgent()
 
 
 def _resolve_parse_agent(allow_mock: bool, engine_config: str | None) -> ParseAgent:
@@ -283,17 +283,17 @@ def _build_ir_node(state: PipelineState) -> PipelineState:
     }
 
 
-def _enrich_visual_node(state: PipelineState) -> PipelineState:
+def _enrich_image_node(state: PipelineState) -> PipelineState:
     started = time.perf_counter()
-    visual_stats = VISUAL_AGENT.capability_snapshot()
+    image_stats = IMAGE_AGENT.capability_snapshot()
     return {
-        "visual_agent": visual_stats,
+        "image_agent": image_stats,
         "performance": _record_node_timing(
             state,
-            "enrich_visual",
+            "enrich_image",
             time.perf_counter() - started,
             {
-                "enabled": bool(visual_stats.get("enabled", False)),
+                "enabled": bool(image_stats.get("enabled", False)),
                 "mode": "on_demand",
                 "skipped": True,
             },
@@ -455,7 +455,7 @@ def build_graph():
     graph.add_node("select", _select_node)
     graph.add_node("parse", _parse_node)
     graph.add_node("build_ir", _build_ir_node)
-    graph.add_node("enrich_visual", _enrich_visual_node)
+    graph.add_node("enrich_image", _enrich_image_node)
     graph.add_node("validate", _validate_node)
     graph.add_node("prepare_rerun", _prepare_rerun_node)
     graph.add_node("prepare_cascade", _prepare_cascade_node)
@@ -473,8 +473,8 @@ def build_graph():
             "mark_manual_review": "mark_manual_review",
         },
     )
-    graph.add_edge("build_ir", "enrich_visual")
-    graph.add_edge("enrich_visual", "validate")
+    graph.add_edge("build_ir", "enrich_image")
+    graph.add_edge("enrich_image", "validate")
     graph.add_conditional_edges(
         "validate",
         _route_after_validate,
@@ -590,9 +590,9 @@ def main() -> None:
         "cascade_attempt": int(result.get("cascade_attempt", 0)),
         "cascade_active": bool(result.get("cascade_active", False)),
         "engine": result.get("engine"),
-        "visual_agent": result.get("visual_agent")
-        if isinstance(result.get("visual_agent"), dict)
-        else VISUAL_AGENT.capability_snapshot(),
+        "image_agent": result.get("image_agent")
+        if isinstance(result.get("image_agent"), dict)
+        else IMAGE_AGENT.capability_snapshot(),
     }
     performance_profile = result.get("performance") if isinstance(result.get("performance"), dict) else {"nodes": {}}
     performance_profile = dict(performance_profile)
