@@ -15,6 +15,7 @@ from backend.product_server import build_page_model
 from backend.product_server import build_merged_output
 from backend.product_server import build_merged_output_bundle
 from backend.product_server import build_pipeline_command
+from backend.product_server import compress_page_numbers
 from backend.product_server import compute_duration_sec
 from backend.product_server import default_selection_mode
 from backend.product_server import ensure_run_allowed
@@ -22,12 +23,14 @@ from backend.product_server import format_merged_page_markdown
 from backend.product_server import load_image_agent_cache_record
 from backend.product_server import load_document_ir
 from backend.product_server import load_job_manifest
+from backend.product_server import load_page_preview_source
 from backend.product_server import make_job_id
 from backend.product_server import make_run_id
 from backend.product_server import page_model_to_payload
 from backend.product_server import parse_utc
 from backend.product_server import read_document_job_manifests
 from backend.product_server import read_run_insights
+from backend.product_server import resolve_output_dir
 from backend.product_server import resolve_page_preview_output
 from backend.product_server import sanitize_filename
 from backend.product_server import utc_now
@@ -47,6 +50,10 @@ from backend.job_manifests import load_job_manifest as load_job_manifest_from_mo
 from backend.job_manifests import read_document_job_manifests as read_document_job_manifests_from_module
 from backend.pipeline_command import build_pipeline_command as build_pipeline_command_from_module
 from backend.pipeline_command import default_selection_mode as default_selection_mode_from_module
+from backend.output_planner import compress_page_numbers as compress_page_numbers_from_module
+from backend.output_planner import load_page_preview_source as load_page_preview_source_from_module
+from backend.output_planner import looks_like_bad_reliable_override as looks_like_bad_reliable_override_from_module
+from backend.output_planner import resolve_output_dir as resolve_output_dir_from_module
 from backend.run_insights import read_run_insights as read_run_insights_from_module
 from backend.image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_MODULE_VERSION
 from backend.image_agent_cache import load_image_agent_cache_record as load_image_agent_cache_record_from_module
@@ -407,6 +414,19 @@ def test_job_manifests_module_matches_product_server_exports(monkeypatch, tmp_pa
     assert read_document_job_manifests_from_module("doc_demo", data_root=data_root) == read_document_job_manifests("doc_demo")
 
 
+def test_output_planner_module_matches_product_server_exports(tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    job.output_dir = str(tmp_path / "current" / "output")
+    job.run_id = "run_current"
+    output_dir = tmp_path / "preview" / "output"
+    _write_document_ir(output_dir, {1: "PREVIEW P1"})
+
+    assert compress_page_numbers_from_module([4, 2, 3, 7]) == compress_page_numbers([4, 2, 3, 7]) == "2-4,7"
+    assert resolve_output_dir_from_module(job) == resolve_output_dir(job)
+    assert resolve_output_dir_from_module(job, "run_other") == resolve_output_dir(job, "run_other")
+    assert load_page_preview_source_from_module(output_dir, 0) == load_page_preview_source(output_dir, 0)
+
+
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
     job = _make_job(tmp_path)
     merged_ir = {
@@ -632,6 +652,7 @@ def test_bad_reliable_override_is_detected_for_single_giant_table_page() -> None
         ],
     )
 
+    assert looks_like_bad_reliable_override_from_module(reliable_page, fast_page) is True
     assert _looks_like_bad_reliable_override(reliable_page, fast_page) is True
 
 
@@ -656,4 +677,5 @@ def test_bad_reliable_override_does_not_trigger_for_normal_table_page() -> None:
         ],
     )
 
+    assert looks_like_bad_reliable_override_from_module(reliable_page, fast_page) is False
     assert _looks_like_bad_reliable_override(reliable_page, fast_page) is False
