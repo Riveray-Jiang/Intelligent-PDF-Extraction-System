@@ -6,14 +6,26 @@ from pathlib import Path
 import pytest
 
 from backend.product_server import JobRecord
+from backend.product_server import ARTIFACT_FILENAMES
 from backend.product_server import IMAGE_AGENT_CACHE_VERSION
 from backend.product_server import _looks_like_bad_reliable_override
 from backend.product_server import _parse_multipart_form_data
+from backend.product_server import artifact_paths_for_output_dir
+from backend.product_server import build_page_model
 from backend.product_server import build_merged_output
 from backend.product_server import build_merged_output_bundle
 from backend.product_server import ensure_run_allowed
+from backend.product_server import format_merged_page_markdown
 from backend.product_server import load_image_agent_cache_record
+from backend.product_server import load_document_ir
+from backend.product_server import page_model_to_payload
 from backend.product_server import resolve_page_preview_output
+from backend.document_artifacts import ARTIFACT_FILENAMES as DOCUMENT_ARTIFACT_FILENAMES
+from backend.document_artifacts import artifact_paths_for_output_dir as artifact_paths_for_output_dir_from_module
+from backend.document_artifacts import build_page_model as build_page_model_from_module
+from backend.document_artifacts import format_merged_page_markdown as format_merged_page_markdown_from_module
+from backend.document_artifacts import load_document_ir as load_document_ir_from_module
+from backend.document_artifacts import page_model_to_payload as page_model_to_payload_from_module
 from backend.image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_MODULE_VERSION
 from backend.image_agent_cache import load_image_agent_cache_record as load_image_agent_cache_record_from_module
 from backend.image_agent_preview import extract_image_agent_preview as extract_image_agent_preview_from_module
@@ -228,6 +240,42 @@ def test_local_image_fallback_module_matches_product_server_inert_hook(tmp_path:
 
     assert apply_local_image_fallback_from_module(job, output_dir, 1, page) == page
     assert apply_local_image_fallback(job, output_dir, 1, page) == page
+
+
+def test_document_artifact_module_matches_product_server_exports(tmp_path: Path) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    document_ir_path = output_dir / "document_ir.json"
+    page_payload = {
+        "page_index": 0,
+        "width": 612,
+        "height": 792,
+        "blocks": [
+            {
+                "id": "b1",
+                "type": "text",
+                "text": "hello",
+                "bbox": [1, 2, 3, 4],
+                "order": 0,
+                "confidence": 0.9,
+                "source": {"engine": "test"},
+                "semantic_type": "body",
+                "heading_level": None,
+            }
+        ],
+    }
+    document_ir = {"source_engine": "test", "pages": [page_payload]}
+    document_ir_path.write_text(json.dumps(document_ir), encoding="utf-8")
+
+    page_from_module = build_page_model_from_module(page_payload)
+    page_from_server = build_page_model(page_payload)
+
+    assert DOCUMENT_ARTIFACT_FILENAMES == ARTIFACT_FILENAMES
+    assert artifact_paths_for_output_dir_from_module(output_dir) == artifact_paths_for_output_dir(output_dir)
+    assert load_document_ir_from_module(document_ir_path) == load_document_ir(document_ir_path) == document_ir
+    assert page_from_module == page_from_server
+    assert page_model_to_payload_from_module(page_from_module) == page_model_to_payload(page_from_server)
+    assert format_merged_page_markdown_from_module(2, "") == format_merged_page_markdown(2, "")
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:

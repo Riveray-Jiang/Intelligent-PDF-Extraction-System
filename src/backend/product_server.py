@@ -25,6 +25,12 @@ from urllib.parse import parse_qs
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from .document_artifacts import ARTIFACT_FILENAMES
+from .document_artifacts import artifact_paths_for_output_dir
+from .document_artifacts import build_page_model
+from .document_artifacts import format_merged_page_markdown
+from .document_artifacts import load_document_ir
+from .document_artifacts import page_model_to_payload
 from .ingestion_agent import IngestionAgent
 from .engine_service_manager import EngineServiceManager
 from .markdown_export import page_to_preview_markdown
@@ -48,12 +54,6 @@ from .multipart_form import parse_multipart_form_data as _parse_multipart_form_d
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = REPO_ROOT / "data" / "jobs"
 RUN_HISTORY_PATH = REPO_ROOT / "data" / "run_history.jsonl"
-ARTIFACT_FILENAMES = (
-    "document_ir.json",
-    "document.md",
-    "validation_report.json",
-    "pipeline_state.json",
-)
 CURRENT_REPAIR_ENGINE_VERSION = "mineru2.5-pro-direct-v1"
 INGESTION_AGENT = IngestionAgent()
 SELECTION_AGENT = SelectionAgent()
@@ -158,10 +158,6 @@ def append_run_history(job: "JobRecord") -> None:
     with RUN_HISTORY_LOCK:
         with RUN_HISTORY_PATH.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-
-def artifact_paths_for_output_dir(output_dir: Path) -> dict[str, Path]:
-    return {name: output_dir / name for name in ARTIFACT_FILENAMES}
 
 
 def read_job_run_history(
@@ -454,40 +450,6 @@ def build_effective_output_plan(job: "JobRecord") -> dict[str, Any] | None:
     }
 
 
-def load_document_ir(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def build_page_model(page_payload: dict[str, Any]) -> Page:
-    page_index = int(page_payload.get("page_index", 0))
-    blocks = page_payload.get("blocks", [])
-    return Page(
-        page_index=page_index,
-        width=page_payload.get("width"),
-        height=page_payload.get("height"),
-        blocks=[
-            Block(
-                id=str(block.get("id") or f"p{page_index}_b{idx}"),
-                type=str(block.get("type", "unknown")),
-                text=str(block.get("text") or ""),
-                bbox=block.get("bbox"),
-                order=block.get("order"),
-                confidence=block.get("confidence"),
-                source=block.get("source") or {},
-                page_index=page_index,
-                semantic_type=block.get("semantic_type"),
-                heading_level=block.get("heading_level"),
-            )
-            for idx, block in enumerate(blocks)
-        ],
-    )
-
-
 def load_page_preview_source(output_dir: Path, page_index: int) -> tuple[Page, dict[str, int], str | None, dict[str, Any]] | None:
     document_ir = load_document_ir(output_dir / "document_ir.json")
     if document_ir is None:
@@ -589,36 +551,6 @@ def _looks_like_bad_reliable_override(candidate_page: Page, fast_page: Page | No
         if overlap >= 0.35:
             return False
     return True
-
-
-def page_model_to_payload(page: Page) -> dict[str, Any]:
-    return {
-        "page_index": page.page_index,
-        "width": page.width,
-        "height": page.height,
-        "blocks": [
-            {
-                "id": block.id,
-                "type": block.type,
-                "text": block.text,
-                "bbox": block.bbox,
-                "order": block.order,
-                "confidence": block.confidence,
-                "source": block.source,
-                "page_index": block.page_index,
-                "semantic_type": block.semantic_type,
-                "heading_level": block.heading_level,
-            }
-            for block in page.blocks
-        ],
-    }
-
-
-def format_merged_page_markdown(page_number: int, page_markdown: str) -> str:
-    content = page_markdown.strip()
-    if not content:
-        content = "_No extracted content on this page._"
-    return f"## Page {page_number}\n\n{content}"
 
 
 def build_merged_output(job: "JobRecord") -> tuple[dict[str, Any], str] | None:
