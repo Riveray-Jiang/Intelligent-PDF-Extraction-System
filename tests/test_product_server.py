@@ -25,6 +25,7 @@ from backend.product_server import make_job_id
 from backend.product_server import make_run_id
 from backend.product_server import page_model_to_payload
 from backend.product_server import parse_utc
+from backend.product_server import read_run_insights
 from backend.product_server import resolve_page_preview_output
 from backend.product_server import sanitize_filename
 from backend.product_server import utc_now
@@ -42,6 +43,7 @@ from backend.job_utils import sanitize_filename as sanitize_filename_from_module
 from backend.job_utils import utc_now as utc_now_from_module
 from backend.pipeline_command import build_pipeline_command as build_pipeline_command_from_module
 from backend.pipeline_command import default_selection_mode as default_selection_mode_from_module
+from backend.run_insights import read_run_insights as read_run_insights_from_module
 from backend.image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_MODULE_VERSION
 from backend.image_agent_cache import load_image_agent_cache_record as load_image_agent_cache_record_from_module
 from backend.image_agent_preview import extract_image_agent_preview as extract_image_agent_preview_from_module
@@ -336,6 +338,32 @@ def test_pipeline_command_module_matches_product_server_exports(tmp_path: Path) 
 
     assert default_selection_mode_from_module({"pages": []}) == default_selection_mode({"pages": []}) == "all"
     assert build_pipeline_command_from_module(**kwargs) == build_pipeline_command(**kwargs)
+
+
+def test_run_insights_module_matches_product_server_export(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    job = _make_job(tmp_path)
+    output_dir = job.default_output_dir
+    output_dir.mkdir(parents=True)
+    (output_dir / "pipeline_state.json").write_text(
+        json.dumps(
+            {
+                "cascade_attempt": 2,
+                "image_agent": {
+                    "image_pages_detected": 3,
+                    "image_pages_enriched": 2,
+                    "image_pages_failed": 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "validation_report.json").write_text(
+        json.dumps({"failed_pages": [{"page": 1}, {"page": 4}]}),
+        encoding="utf-8",
+    )
+
+    assert read_run_insights_from_module(job) == read_run_insights(job)
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
