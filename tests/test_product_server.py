@@ -17,8 +17,10 @@ from backend.product_server import resolve_page_preview_output
 from backend.image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_MODULE_VERSION
 from backend.image_agent_cache import load_image_agent_cache_record as load_image_agent_cache_record_from_module
 from backend.image_agent_preview import extract_image_agent_preview as extract_image_agent_preview_from_module
+from backend.local_image_fallback import apply_local_image_fallback as apply_local_image_fallback_from_module
 from backend.multipart_form import parse_multipart_form_data
 from backend.product_server import extract_image_agent_preview
+from backend.product_server import apply_local_image_fallback
 from backend.types import Block
 from backend.types import Page
 
@@ -214,6 +216,18 @@ def test_multipart_form_module_matches_product_server_compatibility_import() -> 
         body,
         content_type,
     )
+
+
+def test_local_image_fallback_module_matches_product_server_inert_hook(tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    page = Page(
+        page_index=0,
+        blocks=[Block(id="image", type="image", text="", page_index=0, order=0)],
+    )
+    output_dir = tmp_path / "output"
+
+    assert apply_local_image_fallback_from_module(job, output_dir, 1, page) == page
+    assert apply_local_image_fallback(job, output_dir, 1, page) == page
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:

@@ -25,15 +25,9 @@ from urllib.parse import parse_qs
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from PIL import Image
-from PIL import ImageOps
-
-from .adapters.paddle_adapter import PaddleAdapter
 from .ingestion_agent import IngestionAgent
 from .engine_service_manager import EngineServiceManager
-from .ir_builder_agent import IRBuilderAgent
 from .markdown_export import page_to_preview_markdown
-from .parse_agent import ParseAgent
 from .pdfium_runtime import PDFIUM_LOCK
 from .selection_agent import SelectionAgent
 from .selection_agent import sanitize_outline_items
@@ -47,6 +41,7 @@ from .image_agent_cache import legacy_image_agent_cache_path
 from .image_agent_cache import load_image_agent_cache_record
 from .image_agent_cache import save_image_agent_cache_record
 from .image_agent_preview import extract_image_agent_preview
+from .local_image_fallback import apply_local_image_fallback
 from .multipart_form import parse_multipart_form_data as _parse_multipart_form_data
 
 
@@ -64,10 +59,6 @@ INGESTION_AGENT = IngestionAgent()
 SELECTION_AGENT = SelectionAgent()
 RUN_HISTORY_LOCK = threading.Lock()
 IMAGE_AGENT = ImageAgent()
-PADDLE_ADAPTER = PaddleAdapter()
-IR_BUILDER = IRBuilderAgent()
-PADDLE_LOCAL_FALLBACK_CONFIG = REPO_ROOT / "configs" / "engines_prod_vlm_repair.yaml"
-LOCAL_IMAGE_FALLBACK_CACHE_VERSION = 1
 
 
 def default_selection_mode(ingestion_output: dict[str, Any]) -> str:
@@ -538,16 +529,6 @@ def _preview_content_blocks(page: Page) -> list[Block]:
     return filtered
 
 
-def _page_coordinate_size(page: Page, image: Image.Image) -> tuple[float, float]:
-    width = float(page.width or 0)
-    height = float(page.height or 0)
-    if width <= 0:
-        width = max((float(block.bbox[2]) for block in page.blocks if block.bbox and len(block.bbox) >= 4), default=float(image.width))
-    if height <= 0:
-        height = max((float(block.bbox[3]) for block in page.blocks if block.bbox and len(block.bbox) >= 4), default=float(image.height))
-    return max(width, 1.0), max(height, 1.0)
-
-
 def _bbox_area_ratio(block: Block, page: Page) -> float:
     if not block.bbox or len(block.bbox) < 4:
         return 0.0
@@ -610,47 +591,6 @@ def _looks_like_bad_reliable_override(candidate_page: Page, fast_page: Page | No
     return True
 
 
-def local_image_fallback_cache_path(output_dir: Path) -> Path:
-    return output_dir / "local_image_fallback_cache.json"
-
-
-def _load_local_image_fallback_cache(output_dir: Path) -> dict[str, Any]:
-    cache_path = local_image_fallback_cache_path(output_dir)
-    if not cache_path.exists():
-        return {"version": LOCAL_IMAGE_FALLBACK_CACHE_VERSION, "pages": {}}
-    try:
-        payload = json.loads(cache_path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError):
-        return {"version": LOCAL_IMAGE_FALLBACK_CACHE_VERSION, "pages": {}}
-    if not isinstance(payload, dict) or payload.get("version") != LOCAL_IMAGE_FALLBACK_CACHE_VERSION:
-        return {"version": LOCAL_IMAGE_FALLBACK_CACHE_VERSION, "pages": {}}
-    pages = payload.get("pages")
-    if not isinstance(pages, dict):
-        payload["pages"] = {}
-    return payload
-
-
-def load_local_image_fallback_page_cache(output_dir: Path, page_number: int) -> dict[str, Any]:
-    pages = _load_local_image_fallback_cache(output_dir).get("pages")
-    if not isinstance(pages, dict):
-        return {}
-    record = pages.get(str(page_number))
-    return record if isinstance(record, dict) else {}
-
-
-def save_local_image_fallback_page_cache(output_dir: Path, page_number: int, record: dict[str, Any]) -> None:
-    payload = _load_local_image_fallback_cache(output_dir)
-    pages = payload.get("pages")
-    if not isinstance(pages, dict):
-        pages = {}
-        payload["pages"] = pages
-    payload["version"] = LOCAL_IMAGE_FALLBACK_CACHE_VERSION
-    pages[str(page_number)] = record
-    cache_path = local_image_fallback_cache_path(output_dir)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def page_model_to_payload(page: Page) -> dict[str, Any]:
     return {
         "page_index": page.page_index,
@@ -672,170 +612,6 @@ def page_model_to_payload(page: Page) -> dict[str, Any]:
             for block in page.blocks
         ],
     }
-
-
-def ensure_preview_image(job: "JobRecord", page_number: int) -> Path:
-    preview_path = job.previews_dir / f"page_{page_number}.jpg"
-    if preview_path.exists():
-        return preview_path
-
-    page_index = page_number - 1
-    import pypdfium2 as pdfium
-
-    with PDFIUM_LOCK:
-        doc = pdfium.PdfDocument(str(job.input_pdf))
-        try:
-            if page_index < 0 or page_index >= len(doc):
-                raise RuntimeError("Page out of range")
-            page = doc[page_index]
-            bitmap = page.render(scale=150.0 / 72.0)
-            image = bitmap.to_pil()
-            job.previews_dir.mkdir(parents=True, exist_ok=True)
-            image.save(preview_path, format="JPEG", quality=85, optimize=True)
-        finally:
-            doc.close()
-    return preview_path
-
-
-def _deemphasize_red_marks(image: Image.Image) -> Image.Image:
-    rgb = image.convert("RGB")
-    pixels = rgb.load()
-    width, height = rgb.size
-    for x in range(width):
-        for y in range(height):
-            r, g, b = pixels[x, y]
-            if r > 150 and r > int(g * 1.15) and r > int(b * 1.15):
-                neutral = max(g, b, 235)
-                pixels[x, y] = (neutral, neutral, neutral)
-    return rgb
-
-
-def _score_fallback_markdown(markdown: str) -> int:
-    cleaned = re.sub(r"\[Image content present\]", "", markdown, flags=re.IGNORECASE).strip()
-    if not cleaned or cleaned == "_No extracted content on this page._":
-        return 0
-    return len(re.sub(r"\s+", "", cleaned))
-
-
-def _block_needs_local_image_fallback(block: Block) -> bool:
-    block_type = block.type.lower().strip()
-    if block_type not in {"image", "figure", "image_body"}:
-        return False
-    if not block.bbox or len(block.bbox) < 4:
-        return False
-    if any(_block_source_raw(block).get(key) for key in ("image_caption", "table_caption")):
-        return False
-    source = block.source if isinstance(block.source, dict) else {}
-    return not bool(str(source.get("fallback_extracted_markdown") or "").strip())
-
-
-def _call_local_paddle_image_parse(image_bytes: bytes, filename: str) -> dict[str, Any]:
-    manager = EngineServiceManager(REPO_ROOT)
-    engines = manager._load_engine_config(PADDLE_LOCAL_FALLBACK_CONFIG)
-    engine_cfg = engines.get("paddle")
-    if not isinstance(engine_cfg, dict):
-        raise RuntimeError("Paddle fallback engine config is unavailable.")
-    profiles = engine_cfg.get("retry_profiles", [])
-    if not isinstance(profiles, list) or not profiles:
-        raise RuntimeError("Paddle fallback profile is unavailable.")
-    service_info = manager.ensure_service("paddle", engine_cfg, profiles[0])
-    return manager.invoke_paddle_parse_image(base_url=service_info["url"], image_bytes=image_bytes, filename=filename, timeout_sec=240)
-
-
-def _extract_markdown_from_paddle_image_response(raw_response: dict[str, Any], filename: str) -> str:
-    json_files = raw_response.get("json_files")
-    if not isinstance(json_files, list):
-        return ""
-    pages = ParseAgent._load_paddle_json_batch_from_items(json_files)
-    if not pages:
-        return ""
-    normalized = PADDLE_ADAPTER.parse({"pages": pages}, source_file=filename)
-    document_ir = IR_BUILDER.run("paddle", normalized)
-    if not document_ir.pages:
-        return ""
-    return page_to_preview_markdown(document_ir.pages[0]).strip()
-
-
-def _iter_fallback_crop_variants(image: Image.Image) -> list[tuple[str, Image.Image]]:
-    variants: list[tuple[str, Image.Image]] = [("original", image.convert("RGB"))]
-    grayscale = ImageOps.autocontrast(image.convert("L")).convert("RGB")
-    variants.append(("grayscale", grayscale))
-    variants.append(("deemphasize_red", _deemphasize_red_marks(image)))
-    return variants
-
-
-def _run_local_image_fallback_for_block(job: "JobRecord", page_number: int, page: Page, block: Block) -> dict[str, Any] | None:
-    preview_path = ensure_preview_image(job, page_number)
-    with Image.open(preview_path) as preview_image:
-        image = preview_image.convert("RGB")
-        page_width, page_height = _page_coordinate_size(page, image)
-        scale_x = image.width / page_width
-        scale_y = image.height / page_height
-        left, top, right, bottom = [float(value) for value in block.bbox or [0, 0, 0, 0]]
-        crop_box = (
-            max(0, int(left * scale_x) - 18),
-            max(0, int(top * scale_y) - 18),
-            min(image.width, int(right * scale_x) + 18),
-            min(image.height, int(bottom * scale_y) + 18),
-        )
-        if crop_box[2] - crop_box[0] < 40 or crop_box[3] - crop_box[1] < 40:
-            return None
-        crop = image.crop(crop_box)
-
-    best_result: dict[str, Any] | None = None
-    best_score = 0
-    for variant_name, variant_image in _iter_fallback_crop_variants(crop):
-        buffer = io.BytesIO()
-        variant_image.save(buffer, format="PNG")
-        raw_response = _call_local_paddle_image_parse(buffer.getvalue(), f"{block.id}_{variant_name}.png")
-        markdown = _extract_markdown_from_paddle_image_response(raw_response, f"{block.id}_{variant_name}.png")
-        score = _score_fallback_markdown(markdown)
-        if score > best_score:
-            best_score = score
-            best_result = {
-                "variant": variant_name,
-                "markdown": markdown,
-                "score": score,
-            }
-    return best_result if best_score > 0 else None
-
-
-def apply_local_image_fallback(job: "JobRecord", output_dir: Path, page_number: int, page: Page) -> Page:
-    # Product repair now uses the dedicated MinerU2.5-Pro repair path. Keep this
-    # hook inert so preview/merged output is not silently changed by Paddle.
-    return page
-
-    cache = load_local_image_fallback_page_cache(output_dir, page_number)
-    cached_blocks = cache.get("blocks") if isinstance(cache.get("blocks"), dict) else {}
-    updated_blocks: list[Block] = []
-    cache_dirty = False
-
-    for block in page.blocks:
-        updated_block = block
-        if _block_needs_local_image_fallback(block):
-            block_cache = cached_blocks.get(block.id) if isinstance(cached_blocks, dict) else None
-            fallback_markdown = ""
-            if isinstance(block_cache, dict):
-                fallback_markdown = str(block_cache.get("markdown") or "").strip()
-            if not fallback_markdown:
-                try:
-                    generated = _run_local_image_fallback_for_block(job, page_number, page, block)
-                except Exception:
-                    generated = None
-                if generated is not None:
-                    fallback_markdown = str(generated.get("markdown") or "").strip()
-                    cached_blocks[block.id] = generated
-                    cache_dirty = True
-            if fallback_markdown:
-                source = dict(block.source) if isinstance(block.source, dict) else {}
-                source["fallback_extracted_markdown"] = fallback_markdown
-                updated_block = block.model_copy(update={"source": source})
-        updated_blocks.append(updated_block)
-
-    if cache_dirty:
-        save_local_image_fallback_page_cache(output_dir, page_number, {"blocks": cached_blocks})
-
-    return page.model_copy(update={"blocks": updated_blocks})
 
 
 def format_merged_page_markdown(page_number: int, page_markdown: str) -> str:
