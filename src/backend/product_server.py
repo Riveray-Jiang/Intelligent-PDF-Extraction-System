@@ -8,7 +8,6 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 import threading
 import time
 import zipfile
@@ -52,6 +51,8 @@ from .job_utils import sanitize_filename
 from .job_utils import utc_now
 from .local_image_fallback import apply_local_image_fallback
 from .multipart_form import parse_multipart_form_data as _parse_multipart_form_data
+from .pipeline_command import build_pipeline_command
+from .pipeline_command import default_selection_mode
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -62,49 +63,6 @@ INGESTION_AGENT = IngestionAgent()
 SELECTION_AGENT = SelectionAgent()
 RUN_HISTORY_LOCK = threading.Lock()
 IMAGE_AGENT = ImageAgent()
-
-
-def default_selection_mode(ingestion_output: dict[str, Any]) -> str:
-    return "all"
-
-
-def build_pipeline_command(
-    *,
-    input_pdf: Path,
-    output_dir: Path,
-    selection_mode: str,
-    selection: str | None,
-    run_mode: str,
-    engine: str,
-    engine_config: Path,
-    cascade_engine: str,
-    cascade_engine_config: Path,
-    max_parse_attempts: int,
-    max_rerun_attempts: int,
-    max_cascade_attempts: int,
-) -> list[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "backend.pipeline_graph",
-        "--input",
-        str(input_pdf),
-        "--engine",
-        engine,
-        "--selection-mode",
-        selection_mode,
-        "--output-dir",
-        str(output_dir),
-        "--engine-config",
-        str(engine_config),
-        "--max-parse-attempts",
-        str(max_parse_attempts),
-        "--max-rerun-attempts",
-        str(max_rerun_attempts),
-    ]
-    if selection:
-        command.extend(["--selection", selection])
-    return command
 
 
 def append_run_history(job: "JobRecord") -> None:

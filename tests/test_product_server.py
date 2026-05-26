@@ -14,7 +14,9 @@ from backend.product_server import artifact_paths_for_output_dir
 from backend.product_server import build_page_model
 from backend.product_server import build_merged_output
 from backend.product_server import build_merged_output_bundle
+from backend.product_server import build_pipeline_command
 from backend.product_server import compute_duration_sec
+from backend.product_server import default_selection_mode
 from backend.product_server import ensure_run_allowed
 from backend.product_server import format_merged_page_markdown
 from backend.product_server import load_image_agent_cache_record
@@ -38,6 +40,8 @@ from backend.job_utils import make_run_id as make_run_id_from_module
 from backend.job_utils import parse_utc as parse_utc_from_module
 from backend.job_utils import sanitize_filename as sanitize_filename_from_module
 from backend.job_utils import utc_now as utc_now_from_module
+from backend.pipeline_command import build_pipeline_command as build_pipeline_command_from_module
+from backend.pipeline_command import default_selection_mode as default_selection_mode_from_module
 from backend.image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_MODULE_VERSION
 from backend.image_agent_cache import load_image_agent_cache_record as load_image_agent_cache_record_from_module
 from backend.image_agent_preview import extract_image_agent_preview as extract_image_agent_preview_from_module
@@ -312,6 +316,26 @@ def test_job_utils_module_matches_product_server_exports() -> None:
     server_run_id = make_run_id("reliable")
     assert module_run_id.startswith("run_") and "_reliable_" in module_run_id
     assert server_run_id.startswith("run_") and "_reliable_" in server_run_id
+
+
+def test_pipeline_command_module_matches_product_server_exports(tmp_path: Path) -> None:
+    kwargs = {
+        "input_pdf": tmp_path / "input.pdf",
+        "output_dir": tmp_path / "output",
+        "selection_mode": "pages",
+        "selection": "1-2",
+        "run_mode": "reliable",
+        "engine": "mineru",
+        "engine_config": tmp_path / "engines.yaml",
+        "cascade_engine": "paddle",
+        "cascade_engine_config": tmp_path / "repair.yaml",
+        "max_parse_attempts": 2,
+        "max_rerun_attempts": 1,
+        "max_cascade_attempts": 1,
+    }
+
+    assert default_selection_mode_from_module({"pages": []}) == default_selection_mode({"pages": []}) == "all"
+    assert build_pipeline_command_from_module(**kwargs) == build_pipeline_command(**kwargs)
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
