@@ -15,8 +15,6 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import timezone
-from email.parser import BytesParser
-from email.policy import default as email_policy_default
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -43,6 +41,13 @@ from .types import Block
 from .types import Page
 from .image_agent import ImageAgent
 from .image_agent import page_has_image_content
+from .image_agent_cache import IMAGE_AGENT_CACHE_VERSION
+from .image_agent_cache import image_agent_cache_path
+from .image_agent_cache import legacy_image_agent_cache_path
+from .image_agent_cache import load_image_agent_cache_record
+from .image_agent_cache import save_image_agent_cache_record
+from .image_agent_preview import extract_image_agent_preview
+from .multipart_form import parse_multipart_form_data as _parse_multipart_form_data
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -63,37 +68,6 @@ PADDLE_ADAPTER = PaddleAdapter()
 IR_BUILDER = IRBuilderAgent()
 PADDLE_LOCAL_FALLBACK_CONFIG = REPO_ROOT / "configs" / "engines_prod_vlm_repair.yaml"
 LOCAL_IMAGE_FALLBACK_CACHE_VERSION = 1
-
-
-def _parse_multipart_form_data(
-    body: bytes,
-    content_type: str,
-) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
-    message = BytesParser(policy=email_policy_default).parsebytes(
-        b"Content-Type: "
-        + content_type.encode("latin-1", errors="replace")
-        + b"\r\nMIME-Version: 1.0\r\n\r\n"
-        + body
-    )
-    fields: dict[str, str] = {}
-    files: dict[str, tuple[str, bytes]] = {}
-    if not message.is_multipart():
-        return fields, files
-
-    for part in message.iter_parts():
-        if part.get_content_disposition() != "form-data":
-            continue
-        name = part.get_param("name", header="content-disposition")
-        if not name:
-            continue
-        payload = part.get_payload(decode=True) or b""
-        filename = part.get_filename()
-        if filename is not None:
-            files[str(name)] = (str(filename), payload)
-            continue
-        charset = part.get_content_charset() or "utf-8"
-        fields[str(name)] = payload.decode(charset, errors="replace")
-    return fields, files
 
 
 def default_selection_mode(ingestion_output: dict[str, Any]) -> str:
@@ -988,114 +962,6 @@ def resolve_page_preview_output(job: "JobRecord", page_number: int, run_id: str 
             return Path(str(output_dir)), entry.get("run_id")
 
     return resolve_output_dir(job), job.run_id
-
-
-def image_agent_cache_path(job: "JobRecord") -> Path:
-    return job.job_dir / "image_agent_cache.json"
-
-
-def legacy_image_agent_cache_path(output_dir: Path) -> Path:
-    return output_dir / "image_agent_cache.json"
-
-
-IMAGE_AGENT_CACHE_VERSION = 11
-
-
-def _load_image_agent_cache_payload(cache_path: Path) -> dict[str, Any] | None:
-    if not cache_path.exists():
-        return None
-    try:
-        payload = json.loads(cache_path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if payload.get("version") != IMAGE_AGENT_CACHE_VERSION:
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def _load_image_agent_cache_record_from_path(cache_path: Path, page_number: int) -> dict[str, Any] | None:
-    payload = _load_image_agent_cache_payload(cache_path)
-    if payload is None:
-        return None
-    pages = payload.get("pages")
-    if not isinstance(pages, dict):
-        return None
-    record = pages.get(str(page_number))
-    return record if isinstance(record, dict) else None
-
-
-def load_image_agent_cache_record(
-    job: "JobRecord",
-    page_number: int,
-    *,
-    output_dir: Path | None = None,
-) -> dict[str, Any] | None:
-    cache_path = image_agent_cache_path(job)
-    record = _load_image_agent_cache_record_from_path(cache_path, page_number)
-    if record is not None:
-        return record
-
-    if output_dir is None:
-        return None
-
-    legacy_cache_path = legacy_image_agent_cache_path(output_dir)
-    record = _load_image_agent_cache_record_from_path(legacy_cache_path, page_number)
-    if record is None:
-        return None
-    save_image_agent_cache_record(job, page_number, record)
-    return record
-
-
-def save_image_agent_cache_record(job: "JobRecord", page_number: int, record: dict[str, Any]) -> None:
-    cache_path = image_agent_cache_path(job)
-    payload: dict[str, Any] = {"version": IMAGE_AGENT_CACHE_VERSION, "pages": {}}
-    existing = _load_image_agent_cache_payload(cache_path)
-    if existing is not None:
-        payload = existing
-
-    pages = payload.get("pages")
-    if not isinstance(pages, dict):
-        pages = {}
-        payload["pages"] = pages
-    payload["version"] = IMAGE_AGENT_CACHE_VERSION
-    pages[str(page_number)] = record
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def extract_image_agent_preview(page: Page, cached_record: dict[str, Any] | None = None) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "image_alt_text": None,
-        "image_interpretation_markdown": None,
-        "image_agent_language": None,
-        "image_agent_kind": None,
-        "image_agent_generated": False,
-        "image_agent_empty": False,
-    }
-    image_block = next((block for block in page.blocks if block.type.lower() == "image_interpretation"), None)
-    if image_block is not None:
-        source = image_block.source if isinstance(image_block.source, dict) else {}
-        structured = source.get("structured_output") if isinstance(source.get("structured_output"), dict) else {}
-        summary = str(structured.get("summary") or "").strip()
-        markdown = str(image_block.text or "").strip()
-        result["image_alt_text"] = summary or None
-        result["image_interpretation_markdown"] = markdown or None
-        result["image_agent_language"] = str(source.get("language") or "").strip() or None
-        result["image_agent_kind"] = str(source.get("image_kind") or "").strip() or None
-        result["image_agent_generated"] = True
-        result["image_agent_empty"] = False
-        return result
-
-    if not isinstance(cached_record, dict):
-        return result
-
-    result["image_alt_text"] = str(cached_record.get("summary") or "").strip() or None
-    result["image_interpretation_markdown"] = str(cached_record.get("markdown") or "").strip() or None
-    result["image_agent_language"] = str(cached_record.get("language") or "").strip() or None
-    result["image_agent_kind"] = str(cached_record.get("image_kind") or "").strip() or None
-    result["image_agent_generated"] = bool(cached_record.get("generated", True))
-    result["image_agent_empty"] = not bool(cached_record.get("has_meaningful_image", False))
-    return result
 
 
 def build_file_history_payload(job: "JobRecord") -> dict[str, Any]:

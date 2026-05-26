@@ -14,6 +14,11 @@ from backend.product_server import build_merged_output_bundle
 from backend.product_server import ensure_run_allowed
 from backend.product_server import load_image_agent_cache_record
 from backend.product_server import resolve_page_preview_output
+from backend.image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_MODULE_VERSION
+from backend.image_agent_cache import load_image_agent_cache_record as load_image_agent_cache_record_from_module
+from backend.image_agent_preview import extract_image_agent_preview as extract_image_agent_preview_from_module
+from backend.multipart_form import parse_multipart_form_data
+from backend.product_server import extract_image_agent_preview
 from backend.types import Block
 from backend.types import Page
 
@@ -123,6 +128,56 @@ def test_load_image_agent_cache_record_migrates_legacy_run_cache(tmp_path: Path)
     assert '"3"' in migrated_cache.read_text(encoding="utf-8")
 
 
+def test_image_agent_cache_module_matches_product_server_compatibility_import(tmp_path: Path) -> None:
+    job = _make_job(tmp_path)
+    legacy_output_dir = job.job_dir / "runs" / "run_demo_fast_abc123" / "output"
+    legacy_output_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_output_dir / "image_agent_cache.json").write_text(
+        json.dumps(
+            {
+                "version": IMAGE_AGENT_CACHE_MODULE_VERSION,
+                "pages": {
+                    "2": {
+                        "generated": True,
+                        "has_meaningful_image": True,
+                        "summary": "Module summary",
+                        "markdown": "Module markdown",
+                        "language": "en",
+                        "image_kind": "diagram",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert IMAGE_AGENT_CACHE_MODULE_VERSION == IMAGE_AGENT_CACHE_VERSION
+    assert load_image_agent_cache_record_from_module(job, 2, output_dir=legacy_output_dir)[
+        "summary"
+    ] == load_image_agent_cache_record(job, 2, output_dir=legacy_output_dir)["summary"]
+
+
+def test_image_agent_preview_module_matches_product_server_compatibility_import() -> None:
+    page = Page(
+        page_index=0,
+        blocks=[
+            Block(
+                id="p0_image_agent",
+                type="image_interpretation",
+                text="Image reading markdown",
+                page_index=0,
+                source={
+                    "language": "en",
+                    "image_kind": "diagram",
+                    "structured_output": {"summary": "Image reading summary"},
+                },
+            )
+        ],
+    )
+
+    assert extract_image_agent_preview_from_module(page) == extract_image_agent_preview(page)
+
+
 def test_parse_multipart_form_data_reads_file_and_fields() -> None:
     boundary = "----codex-test-boundary"
     body = (
@@ -141,6 +196,24 @@ def test_parse_multipart_form_data_reads_file_and_fields() -> None:
 
     assert fields["replaces_job_id"] == "job_old"
     assert files["file"] == ("demo.pdf", b"%PDF-1.4\n")
+
+
+def test_multipart_form_module_matches_product_server_compatibility_import() -> None:
+    boundary = "----codex-test-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="name"\r\n\r\n'
+        "value\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="demo.pdf"\r\n'
+        "Content-Type: application/pdf\r\n\r\n"
+    ).encode("ascii") + b"%PDF-1.4\n" + f"\r\n--{boundary}--\r\n".encode("ascii")
+    content_type = f"multipart/form-data; boundary={boundary}"
+
+    assert parse_multipart_form_data(body, content_type) == _parse_multipart_form_data(
+        body,
+        content_type,
+    )
 
 
 def test_build_merged_output_bundle_contains_final_document(monkeypatch, tmp_path: Path) -> None:
