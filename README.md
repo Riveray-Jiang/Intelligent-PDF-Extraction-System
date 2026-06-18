@@ -13,7 +13,7 @@ The repository is maintained as product engineering code. Runtime jobs,
 benchmark outputs, and ad-hoc experiment files stay local unless they are
 curated into fixtures, benchmark manifests, or product documentation.
 
-![Product UI](docs/assets/product-ui.png)
+![Product UI](docs/assets/product-ui-home.jpg)
 
 ## Product Scope
 
