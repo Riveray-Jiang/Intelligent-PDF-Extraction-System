@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -15,9 +14,9 @@ from urllib.parse import urlparse
 
 from .document_artifacts import ARTIFACT_FILENAMES
 from .document_artifacts import artifact_paths_for_output_dir
-from .document_artifacts import build_page_model
-from .document_artifacts import format_merged_page_markdown
-from .document_artifacts import load_document_ir
+from .document_artifacts import build_page_model as build_page_model
+from .document_artifacts import format_merged_page_markdown as format_merged_page_markdown
+from .document_artifacts import load_document_ir as load_document_ir
 from .document_artifacts import page_model_to_payload
 from .ingestion_agent import IngestionAgent
 from .engine_service_manager import EngineServiceManager
@@ -25,12 +24,11 @@ from .file_history import build_file_history_payload as _build_file_history_payl
 from .markdown_export import page_to_preview_markdown
 from .pdfium_runtime import PDFIUM_LOCK
 from .selection_agent import SelectionAgent
-from .types import Page
 from .image_agent import ImageAgent
 from .image_agent import page_has_image_content
-from .image_agent_cache import IMAGE_AGENT_CACHE_VERSION
-from .image_agent_cache import image_agent_cache_path
-from .image_agent_cache import legacy_image_agent_cache_path
+from .image_agent_cache import IMAGE_AGENT_CACHE_VERSION as IMAGE_AGENT_CACHE_VERSION
+from .image_agent_cache import image_agent_cache_path as image_agent_cache_path
+from .image_agent_cache import legacy_image_agent_cache_path as legacy_image_agent_cache_path
 from .image_agent_cache import load_image_agent_cache_record
 from .image_agent_cache import save_image_agent_cache_record
 from .image_agent_preview import extract_image_agent_preview
@@ -41,7 +39,7 @@ from .job_store import JobStore
 from .job_utils import compute_duration_sec
 from .job_utils import make_job_id
 from .job_utils import make_run_id
-from .job_utils import parse_utc
+from .job_utils import parse_utc as parse_utc
 from .job_utils import sanitize_filename
 from .job_utils import utc_now
 from .local_image_fallback import apply_local_image_fallback
@@ -51,15 +49,15 @@ from .multipart_form import parse_multipart_form_data as _parse_multipart_form_d
 from .output_planner import build_effective_output_plan as _build_effective_output_plan
 from .output_planner import completed_history_entries as _completed_history_entries
 from .output_planner import completed_page_set_for_run_mode as _completed_page_set_for_run_mode
-from .output_planner import compress_page_numbers
+from .output_planner import compress_page_numbers as compress_page_numbers
 from .output_planner import current_output_page_set as _current_output_page_set
 from .output_planner import ensure_run_allowed as _ensure_run_allowed
 from .output_planner import load_page_preview_source
-from .output_planner import looks_like_bad_reliable_override as _looks_like_bad_reliable_override
+from .output_planner import looks_like_bad_reliable_override as looks_like_bad_reliable_override
 from .output_planner import resolve_output_dir as _resolve_output_dir
 from .output_planner import resolve_page_preview_output as _resolve_page_preview_output
 from .pipeline_command import build_pipeline_command
-from .pipeline_command import default_selection_mode
+from .pipeline_command import default_selection_mode as default_selection_mode
 from .run_insights import read_run_insights
 
 
@@ -71,6 +69,7 @@ INGESTION_AGENT = IngestionAgent()
 SELECTION_AGENT = SelectionAgent()
 RUN_HISTORY_LOCK = threading.Lock()
 IMAGE_AGENT = ImageAgent()
+_looks_like_bad_reliable_override = looks_like_bad_reliable_override
 
 
 def append_run_history(job: "JobRecord") -> None:
